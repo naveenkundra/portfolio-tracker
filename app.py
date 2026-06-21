@@ -71,8 +71,8 @@ if is_excel:
 
     # Display name mapping: holder → display label with gender
     HOLDER_DISPLAY = {
-        "Naveen": "👨 Naveen (Male)",
-        "Shweta": "👩 Shweta (Female)",
+        "Naveen": "👨 Male",
+        "Shweta": "👩 Female",
     }
     def _display_holder(name):
         return HOLDER_DISPLAY.get(name, name)
