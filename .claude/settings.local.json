@@ -6,7 +6,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
       "PowerShell(Stop-Process *)",
       "PowerShell(Start-Sleep -Seconds 5; Invoke-WebRequest -Uri http://localhost:8501 -UseBasicParsing | Select-Object StatusCode)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

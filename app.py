@@ -69,6 +69,14 @@ if is_excel:
     has_mv = "market_value_cad" in active.columns
     has_bv = "book_value_cad" in active.columns
 
+    # Display name mapping: holder → display label with gender
+    HOLDER_DISPLAY = {
+        "Naveen": "👨 Naveen (Male)",
+        "Shweta": "👩 Shweta (Female)",
+    }
+    def _display_holder(name):
+        return HOLDER_DISPLAY.get(name, name)
+
     # --- Global color styling ---
     PNL_CSS = """
     <style>
@@ -198,7 +206,8 @@ if is_excel:
                 cash_alloc = cash.groupby("holder")["total_cash_cad"].sum().reset_index() if not cash.empty else pd.DataFrame(columns=["holder", "total_cash_cad"])
                 family_alloc = holder_alloc.merge(cash_alloc, on="holder", how="left").fillna(0)
                 family_alloc["total_cad"] = family_alloc["market_value_cad"] + family_alloc["total_cash_cad"]
-                fig_family = px.pie(family_alloc, values="total_cad", names="holder", hole=0.4,
+                family_alloc["display_name"] = family_alloc["holder"].map(_display_holder)
+                fig_family = px.pie(family_alloc, values="total_cad", names="display_name", hole=0.4,
                                     title="By Owner")
                 fig_family.update_traces(texttemplate="$%{value:,.0f}", hovertemplate="%{label}: $%{value:,.0f}<extra></extra>")
                 fig_family.update_layout(margin=dict(t=40, b=20, l=20, r=20), height=300)
@@ -250,7 +259,7 @@ if is_excel:
 
         owner_pnl_cls = "owner-pnl-gain" if h["pnl"] >= 0 else "owner-pnl-loss"
         owner_pnl_sign = "+" if h["pnl"] > 0 else ""
-        st.markdown(f'### 👤 {holder} <span class="{owner_pnl_cls}">{owner_pnl_sign}${h["pnl"]:,.0f} ({owner_pnl_sign}{h["pnl_pct"]:.1%})</span>', unsafe_allow_html=True)
+        st.markdown(f'### {_display_holder(holder)} <span class="{owner_pnl_cls}">{owner_pnl_sign}${h["pnl"]:,.0f} ({owner_pnl_sign}{h["pnl_pct"]:.1%})</span>', unsafe_allow_html=True)
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Value", _money(h["total"]))
         c2.metric("Market Value", _money(h["market_value_cad"]))
@@ -269,7 +278,7 @@ if is_excel:
                 acc_merged["total"] = acc_merged["market_value_cad"] + acc_merged["total_cash_cad"]
                 if acc_merged["total"].sum() > 0:
                     fig_acc = px.pie(acc_merged, values="total", names="account_type", hole=0.4,
-                                    title=f"{holder} — by Account Type")
+                                    title=f"{_display_holder(holder)} — by Account Type")
                     fig_acc.update_traces(texttemplate="$%{value:,.0f}", hovertemplate="%{label}: $%{value:,.0f}<extra></extra>")
                     fig_acc.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=280)
                     st.plotly_chart(fig_acc, use_container_width=True)
@@ -287,7 +296,7 @@ if is_excel:
                         pnl_by_ticker, x=ticker_col, y="pnl",
                         color=pnl_by_ticker["pnl"].apply(lambda x: "Gain" if x >= 0 else "Loss"),
                         color_discrete_map={"Gain": "#00cc66", "Loss": "#ff4444"},
-                        title=f"{holder} — P&L by Holding",
+                        title=f"{_display_holder(holder)} — P&L by Holding",
                     )
                     fig_pnl.update_traces(hovertemplate="%{x}: $%{y:,.0f}<extra></extra>", texttemplate="$%{y:,.0f}", textposition="outside")
                     fig_pnl.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=280, showlegend=False, yaxis_title="P&L (CAD)", yaxis_tickformat="$,.0f")
@@ -460,7 +469,7 @@ if is_excel:
                 h_cash = acc_cash_data[acc_cash_data["holder"] == holder] if not acc_cash_data.empty and "holder" in acc_cash_data.columns else pd.DataFrame()
                 s = _summarize(h_acc, h_cash)
                 summary_rows.append({
-                    "Owner": holder,
+                    "Owner": _display_holder(holder),
                     "Holdings": s["count"],
                     "Market Value": s["market_value_cad"],
                     "Book Value": s["book_value_cad"],
@@ -511,7 +520,7 @@ if is_excel:
                 hs = _summarize(h_acc, h_cash)
                 pnl_cls = "owner-pnl-gain" if hs["pnl"] >= 0 else "owner-pnl-loss"
                 pnl_s = "+" if hs["pnl"] > 0 else ""
-                st.markdown(f'**{holder}** <span class="{pnl_cls}">{pnl_s}${hs["pnl"]:,.0f}</span>', unsafe_allow_html=True)
+                st.markdown(f'**{_display_holder(holder)}** <span class="{pnl_cls}">{pnl_s}${hs["pnl"]:,.0f}</span>', unsafe_allow_html=True)
 
                 detail_cols = ["parent_ticker", "platform", "currency", "units", "cost_per_unit", "book_value_cad", "market_value_cad"]
                 avail = [c for c in detail_cols if c in h_acc.columns]
@@ -575,9 +584,10 @@ if is_excel:
                 h_acc = acc_data[acc_data["holder"] == holder]
                 h_cash = acc_cash_data[acc_cash_data["holder"] == holder] if not acc_cash_data.empty and "holder" in acc_cash_data.columns else pd.DataFrame()
                 hs = _summarize(h_acc, h_cash)
-                row[f"{holder} MV"] = hs["market_value_cad"]
-                row[f"{holder} BV"] = hs["book_value_cad"]
-                row[f"{holder} P&L"] = hs["pnl"]
+                dn = _display_holder(holder)
+                row[f"{dn} MV"] = hs["market_value_cad"]
+                row[f"{dn} BV"] = hs["book_value_cad"]
+                row[f"{dn} P&L"] = hs["pnl"]
             row["Total MV"] = s["market_value_cad"]
             row["Total BV"] = s["book_value_cad"]
             row["Total P&L"] = s["pnl"]
@@ -589,9 +599,10 @@ if is_excel:
             h_all = active[active["holder"] == holder]
             h_cash_all = cash[cash["holder"] == holder] if "holder" in cash.columns else pd.DataFrame()
             hs = _summarize(h_all, h_cash_all)
-            grand_total_row[f"{holder} MV"] = hs["market_value_cad"]
-            grand_total_row[f"{holder} BV"] = hs["book_value_cad"]
-            grand_total_row[f"{holder} P&L"] = hs["pnl"]
+            dn = _display_holder(holder)
+            grand_total_row[f"{dn} MV"] = hs["market_value_cad"]
+            grand_total_row[f"{dn} BV"] = hs["book_value_cad"]
+            grand_total_row[f"{dn} P&L"] = hs["pnl"]
         grand_total_row["Total MV"] = family["market_value_cad"]
         grand_total_row["Total BV"] = family["book_value_cad"]
         grand_total_row["Total P&L"] = family["pnl"]
