@@ -4,6 +4,7 @@ import plotly.express as px
 from portfolio import load_holdings, fetch_prices, build_portfolio, get_portfolio_snapshot
 from ai import generate_insights, suggest_rebalance, summarize_news, risk_assessment, tax_strategy, ai_chat
 from excel_converter import load_excel, split_holdings, to_portfolio_csv, get_summary_by_dimension
+from price_updater import update_portfolio_prices, fetch_exchange_rate
 
 st.set_page_config(page_title="Portfolio Tracker", page_icon="📊", layout="wide")
 
@@ -19,10 +20,18 @@ with st.sidebar:
 
     use_sample = st.button("Use Sample Data")
 
-    if st.button("🔄 Refresh Prices"):
+    st.divider()
+    refresh_prices = st.button("📡 Refresh Live Prices", use_container_width=True, type="primary")
+    if refresh_prices:
         st.cache_data.clear()
-        st.rerun()
+        st.session_state["live_prices"] = True
 
+    if st.session_state.get("live_prices"):
+        st.success("Live prices active")
+    else:
+        st.caption("Using Excel values. Click above for live prices.")
+
+    st.divider()
     with st.expander("Supported Formats"):
         st.markdown("**CSV** — simple format:")
         st.code("ticker,quantity,cost_basis\nAAPL,15,175.50", language="csv")
@@ -74,6 +83,16 @@ if is_excel:
     active = splits["active"]
     cash = splits["cash"]
     sold = splits["sold"]
+
+    # Live price refresh
+    if st.session_state.get("live_prices"):
+        with st.spinner("Fetching live market prices..."):
+            active, cash, live_fx_rate, price_timestamp, price_errors = update_portfolio_prices(active, cash)
+        if price_errors:
+            for err in price_errors:
+                st.warning(f"Price update: {err}")
+        st.sidebar.caption(f"Prices as of: {price_timestamp}")
+        st.sidebar.caption(f"USD/CAD: {live_fx_rate:.4f}")
 
     has_mv = "market_value_cad" in active.columns
     has_bv = "book_value_cad" in active.columns

@@ -162,11 +162,15 @@ def split_holdings(df: pd.DataFrame) -> dict:
     holdings_df["lookup_ticker"] = holdings_df.apply(resolve_ticker, axis=1)
 
     is_sold = holdings_df.get("date_sold", pd.Series(dtype="object")).notna()
+    # Rows with sold_market_value or book_cost_sold are completed sales
+    has_sold_data = (holdings_df.get("sold_market_value", pd.Series(dtype="float64")).fillna(0) != 0) | \
+                    (holdings_df.get("book_cost_sold", pd.Series(dtype="float64")).fillna(0) != 0)
     # Filter out zero-value positions (sold out but no sell date recorded)
     has_value = (holdings_df.get("market_value_cad", pd.Series(dtype="float64")).fillna(0) != 0) | \
                 (holdings_df.get("units", pd.Series(dtype="float64")).fillna(0) != 0)
-    active_df = holdings_df[~is_sold & has_value].copy()
-    sold_df = holdings_df[is_sold | (~is_sold & ~has_value)].copy()
+    is_truly_sold = is_sold | has_sold_data | (~is_sold & ~has_value)
+    active_df = holdings_df[~is_truly_sold].copy()
+    sold_df = holdings_df[is_truly_sold].copy()
 
     return {
         "cash": cash_df,

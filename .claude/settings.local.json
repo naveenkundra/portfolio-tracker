@@ -8,7 +8,17 @@
       "PowerShell(Start-Sleep -Seconds 5; Invoke-WebRequest -Uri http://localhost:8501 -UseBasicParsing | Select-Object StatusCode)",
       "Bash(python -c ' *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo create portfolio-tracker --private --source=\"D:\\\\AI_Related\\\\AI_Learning\\\\Claude Courses\\\\portfolio_tracker\" --push --description \"AI-powered investment portfolio tracker \\(Streamlit + Claude\\)\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo view naveenkundra/portfolio-tracker --json name,visibility,url)",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo edit naveenkundra/portfolio-tracker --visibility public)",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo edit naveenkundra/portfolio-tracker --visibility public --accept-visibility-change-consequences)",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo view naveenkundra/portfolio-tracker --json visibility)",
+      "Bash(git push *)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('price_updater.py', doraise=True\\); py_compile.compile\\('app.py', doraise=True\\); py_compile.compile\\('ai.py', doraise=True\\); print\\('All files compile OK'\\)\")",
+      "PowerShell(Start-Sleep -Seconds 5; try { $r = Invoke-WebRequest -Uri \"http://localhost:8501\" -UseBasicParsing -TimeoutSec 10; \"Status: $\\($r.StatusCode\\)\" } catch { \"Error: $\\($_.Exception.Message\\)\" })",
+      "Bash(cp \"d:\\\\Personal\\\\Financial Accounts Trading Etc\\\\Claude_File_19_June.xlsx\" \"D:\\\\AI_Related\\\\AI_Learning\\\\Claude Courses\\\\portfolio_tracker\\\\data\\\\portfolio.xlsx\")",
+      "Bash(python)"
     ]
   }
 }
