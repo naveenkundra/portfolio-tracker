@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from portfolio import load_holdings, fetch_prices, build_portfolio, get_portfolio_snapshot
-from ai import generate_insights, suggest_rebalance, summarize_news
+from ai import generate_insights, suggest_rebalance, summarize_news, risk_assessment, tax_strategy, ai_chat
 from excel_converter import load_excel, split_holdings, to_portfolio_csv, get_summary_by_dimension
 
 st.set_page_config(page_title="Portfolio Tracker", page_icon="📊", layout="wide")
@@ -668,57 +668,125 @@ if is_excel:
             "family_market_value_cad": round(family["market_value_cad"], 2),
             "family_book_value_cad": round(family["book_value_cad"], 2),
             "family_pnl_cad": round(family["pnl"], 2),
+            "family_pnl_pct": round(family["pnl_pct"], 4) if family["pnl_pct"] else None,
             "family_cash_cad": round(family["cash_cad"], 2),
+            "account_type_breakdown": {},
             "holders": {},
         }
+
+        for acc_type in ordered_family_acc:
+            acc_a = active[active["account_type"] == acc_type]
+            acc_c = cash[cash["account_type"] == acc_type] if not cash.empty and "account_type" in cash.columns else pd.DataFrame()
+            a_sum = _summarize(acc_a, acc_c)
+            snapshot_data["account_type_breakdown"][acc_type] = {
+                "market_value_cad": round(a_sum["market_value_cad"], 2),
+                "book_value_cad": round(a_sum["book_value_cad"], 2),
+                "pnl_cad": round(a_sum["pnl"], 2),
+                "cash_cad": round(a_sum["cash_cad"], 2),
+                "holdings_count": a_sum["count"],
+            }
+
         for holder in holders:
             h_active = active[active["holder"] == holder]
             h_cash_df = cash[cash["holder"] == holder] if "holder" in cash.columns else pd.DataFrame()
             h_sum = _summarize(h_active, h_cash_df)
             holder_data = {
+                "display_name": _display_holder(holder),
                 "total_cad": round(h_sum["total"], 2),
                 "market_value_cad": round(h_sum["market_value_cad"], 2),
                 "book_value_cad": round(h_sum["book_value_cad"], 2),
                 "pnl_cad": round(h_sum["pnl"], 2),
+                "pnl_pct": round(h_sum["pnl_pct"], 4) if h_sum["pnl_pct"] else None,
+                "cash_cad": round(h_sum["cash_cad"], 2),
+                "accounts": {},
                 "holdings": [],
             }
+            for acc_type in h_active["account_type"].dropna().unique():
+                acc_h = h_active[h_active["account_type"] == acc_type]
+                acc_c = h_cash_df[h_cash_df["account_type"] == acc_type] if not h_cash_df.empty and "account_type" in h_cash_df.columns else pd.DataFrame()
+                a_s = _summarize(acc_h, acc_c)
+                holder_data["accounts"][acc_type] = {
+                    "market_value_cad": round(a_s["market_value_cad"], 2),
+                    "book_value_cad": round(a_s["book_value_cad"], 2),
+                    "pnl_cad": round(a_s["pnl"], 2),
+                }
             for _, row in h_active.iterrows():
                 ticker_col = "parent_ticker" if "parent_ticker" in h_active.columns else "ticker"
                 holding = {
-                    "ticker": row.get(ticker_col, ""),
-                    "account": row.get("account_type", ""),
-                    "platform": row.get("platform", ""),
-                    "currency": row.get("currency", ""),
-                    "units": row.get("units", 0),
-                    "book_value_cad": round(row.get("book_value_cad", 0) or 0, 2),
-                    "market_value_cad": round(row.get("market_value_cad", 0) or 0, 2),
+                    "ticker": str(row.get(ticker_col, "")),
+                    "account": str(row.get("account_type", "")),
+                    "platform": str(row.get("platform", "")),
+                    "currency": str(row.get("currency", "")),
+                    "investment_type": str(row.get("investment_type", "")),
+                    "units": float(row.get("units", 0) or 0),
+                    "cost_per_unit": round(float(row.get("cost_per_unit", 0) or 0), 2),
+                    "book_value_cad": round(float(row.get("book_value_cad", 0) or 0), 2),
+                    "market_value_cad": round(float(row.get("market_value_cad", 0) or 0), 2),
                 }
-                holding["pnl_cad"] = holding["market_value_cad"] - holding["book_value_cad"]
+                holding["pnl_cad"] = round(holding["market_value_cad"] - holding["book_value_cad"], 2)
+                holding["return_pct"] = round(holding["pnl_cad"] / holding["book_value_cad"], 4) if holding["book_value_cad"] else None
                 holder_data["holdings"].append(holding)
             snapshot_data["holders"][holder] = holder_data
 
         snapshot = _json.dumps(snapshot_data, indent=2)
 
-        ai_col1, ai_col2, ai_col3 = st.columns(3)
-        with ai_col1:
-            if st.button("💡 Get Insights", use_container_width=True):
-                with st.expander("Portfolio Insights", expanded=True):
+        # AI Analysis tabs
+        ai_tab1, ai_tab2, ai_tab3, ai_tab4, ai_tab5, ai_tab6 = st.tabs([
+            "💡 Portfolio Insights",
+            "⚖️ Rebalance Plan",
+            "🛡️ Risk Assessment",
+            "🏦 Tax Strategy",
+            "📰 News & Research",
+            "💬 Ask Anything",
+        ])
+
+        with ai_tab1:
+            st.caption("Comprehensive portfolio analysis — concentration, diversification, account optimization")
+            if st.button("Run Portfolio Analysis", use_container_width=True, key="btn_insights"):
+                try:
+                    st.write_stream(generate_insights(snapshot))
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+
+        with ai_tab2:
+            st.caption("Specific buy/sell recommendations to optimize allocation and cash deployment")
+            if st.button("Generate Rebalancing Plan", use_container_width=True, key="btn_rebalance"):
+                try:
+                    st.write_stream(suggest_rebalance(snapshot, {}))
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+
+        with ai_tab3:
+            st.caption("Risk score, currency exposure, drawdown scenarios, and mitigation steps")
+            if st.button("Run Risk Assessment", use_container_width=True, key="btn_risk"):
+                try:
+                    st.write_stream(risk_assessment(snapshot))
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+
+        with ai_tab4:
+            st.caption("Canadian tax optimization — TFSA/RSP placement, tax-loss harvesting, capital gains planning")
+            if st.button("Generate Tax Strategy", use_container_width=True, key="btn_tax"):
+                try:
+                    st.write_stream(tax_strategy(snapshot))
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+
+        with ai_tab5:
+            st.caption("Latest context, outlook, and risk rating for each holding")
+            if st.button("Get News & Research", use_container_width=True, key="btn_news"):
+                try:
+                    st.write_stream(summarize_news(snapshot))
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+
+        with ai_tab6:
+            st.caption("Ask any question about your portfolio — uses your actual data to answer")
+            question = st.text_input("What would you like to know?", placeholder="e.g., Which holdings should I sell first for tax-loss harvesting?")
+            if question:
+                if st.button("Ask", use_container_width=True, key="btn_chat"):
                     try:
-                        st.write_stream(generate_insights(snapshot))
-                    except Exception as e:
-                        st.error(f"AI error: {e}")
-        with ai_col2:
-            if st.button("⚖️ Rebalance", use_container_width=True):
-                with st.expander("Rebalancing Suggestions", expanded=True):
-                    try:
-                        st.write_stream(suggest_rebalance(snapshot, {}))
-                    except Exception as e:
-                        st.error(f"AI error: {e}")
-        with ai_col3:
-            if st.button("📰 News Summary", use_container_width=True):
-                with st.expander("News & Context", expanded=True):
-                    try:
-                        st.write_stream(summarize_news(snapshot))
+                        st.write_stream(ai_chat(snapshot, question))
                     except Exception as e:
                         st.error(f"AI error: {e}")
 
