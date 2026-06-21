@@ -148,6 +148,12 @@ if is_excel:
         cash_val = cash_df["total_cash_cad"].sum() if cash_df is not None and not cash_df.empty else 0
         return {"market_value_cad": mv, "book_value_cad": bv, "pnl": pnl, "pnl_pct": pnl_pct, "cash_cad": cash_val, "total": mv + cash_val, "count": len(df)}
 
+    # ── Realized P&L from sold positions ──
+    real_sold = sold[sold["book_cost_sold"].notna() | sold["sold_market_value"].notna() | sold["realized_pnl_cad"].notna()] if not sold.empty else pd.DataFrame()
+    total_realized_cad = real_sold["realized_pnl_cad"].sum() if not real_sold.empty and "realized_pnl_cad" in real_sold.columns else 0
+    total_sold_mv = real_sold["sold_market_value"].sum() if not real_sold.empty and "sold_market_value" in real_sold.columns else 0
+    total_bk_sold = real_sold["book_cost_sold"].sum() if not real_sold.empty and "book_cost_sold" in real_sold.columns else 0
+
     # ── FAMILY PORTFOLIO SUMMARY ──
     family = _summarize(active, cash)
     holders = sorted(active["holder"].dropna().unique()) if "holder" in active.columns else []
@@ -156,22 +162,26 @@ if is_excel:
     st.markdown("### 👨‍👩‍👧‍👦 Family Portfolio Summary")
 
     # Bold total P&L banner
-    pnl_banner_cls = "total-banner-gain" if family["pnl"] >= 0 else "total-banner-loss"
+    combined_pnl = family["pnl"] + total_realized_cad
+    pnl_banner_cls = "total-banner-gain" if combined_pnl >= 0 else "total-banner-loss"
     pnl_sign = "+" if family["pnl"] > 0 else ""
+    real_sign = "+" if total_realized_cad > 0 else ""
+    comb_sign = "+" if combined_pnl > 0 else ""
     st.markdown(f"""<div class="total-banner {pnl_banner_cls}">
         Total Portfolio: <b>${family['total']:,.0f}</b> &nbsp;|&nbsp;
-        Unrealized P&L: <b>{pnl_sign}${family['pnl']:,.0f}</b>
-        ({pnl_sign}{family['pnl_pct']:.1%}) &nbsp;|&nbsp;
-        {len(active)} holdings across {len(holders)} owners
+        Unrealized: <b>{pnl_sign}${family['pnl']:,.0f}</b> &nbsp;|&nbsp;
+        Realized: <b>{real_sign}${total_realized_cad:,.0f}</b> &nbsp;|&nbsp;
+        Combined P&L: <b>{comb_sign}${combined_pnl:,.0f}</b>
     </div>""", unsafe_allow_html=True)
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Total Value (CAD)", _money(family["total"]))
     m2.metric("Market Value", _money(family["market_value_cad"]))
     m3.metric("Book Value", _money(family["book_value_cad"]))
     m4.metric("Unrealized P&L", _money(family["pnl"]),
               delta=_pct(family["pnl_pct"]) if family["pnl_pct"] else None)
-    m5.metric("Cash (CAD)", _money(family["cash_cad"]))
+    m5.metric("Realized P&L (CAD)", _money(total_realized_cad))
+    m6.metric("Cash (CAD)", _money(family["cash_cad"]))
 
     # ── Family-level account type breakdown ──
     family_acc_types = sorted(active["account_type"].dropna().unique()) if "account_type" in active.columns else []
@@ -642,11 +652,51 @@ if is_excel:
     st.divider()
 
     # --- Sold Positions ---
-    if not sold.empty:
-        with st.expander(f"📦 Sold Positions ({len(sold)})"):
-            sold_cols = ["ticker", "holder", "platform", "account_type", "sold_units", "sold_price", "realized_pnl_cad"]
-            sold_avail = [c for c in sold_cols if c in sold.columns]
-            st.dataframe(sold[sold_avail], use_container_width=True, hide_index=True)
+    if not real_sold.empty:
+        with st.expander(f"📦 Sold Positions ({len(real_sold)}) — Realized P&L: {_pnl_html(total_realized_cad)}", expanded=False):
+            st.markdown(f"Book Cost: **${total_bk_sold:,.0f}** → Sold For: **${total_sold_mv:,.0f}** → Realized P&L (CAD): {_pnl_html(total_realized_cad)}", unsafe_allow_html=True)
+
+            sold_display_cols = ["ticker", "parent_ticker", "holder", "account_type", "currency",
+                                 "sold_units", "book_cost_sold", "sold_market_value", "realized_pnl", "realized_pnl_cad"]
+            sold_avail = [c for c in sold_display_cols if c in real_sold.columns]
+            sold_table = real_sold[sold_avail].copy()
+            sold_table["holder"] = sold_table["holder"].map(_display_holder)
+            # Use parent_ticker if available, fall back to ticker
+            if "parent_ticker" in sold_table.columns and "ticker" in sold_table.columns:
+                sold_table["ticker"] = sold_table["parent_ticker"].where(sold_table["parent_ticker"].notna() & (sold_table["parent_ticker"].astype(str).str.strip() != "nan"), sold_table["ticker"])
+                sold_table = sold_table.drop(columns=["parent_ticker"])
+
+            sold_table.columns = [c.replace("_", " ").title() for c in sold_table.columns]
+
+            sold_fmt = {}
+            for col in sold_table.columns:
+                if any(k in col.lower() for k in ["cost", "value", "pnl", "market"]):
+                    sold_fmt[col] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                elif "units" in col.lower():
+                    sold_fmt[col] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+
+            pnl_sold_cols = [c for c in sold_table.columns if "pnl" in c.lower()]
+
+            # Add totals row
+            sold_totals = {}
+            for col in sold_table.columns:
+                if col == sold_table.columns[0]:
+                    sold_totals[col] = "TOTAL"
+                elif any(k in col.lower() for k in ["cost", "value", "pnl", "market"]):
+                    sold_totals[col] = pd.to_numeric(sold_table[col], errors="coerce").sum()
+                else:
+                    sold_totals[col] = ""
+            sold_table = pd.concat([sold_table, pd.DataFrame([sold_totals])], ignore_index=True)
+
+            def _style_sold_total(row):
+                if row.iloc[0] == "TOTAL":
+                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                return [""] * len(row)
+
+            styled_sold = sold_table.style.format(sold_fmt).apply(_style_sold_total, axis=1)
+            if pnl_sold_cols:
+                styled_sold = styled_sold.map(_style_pnl, subset=pnl_sold_cols)
+            st.dataframe(styled_sold, use_container_width=True, hide_index=True)
 
     # --- AI on Excel data ---
     st.divider()
@@ -667,9 +717,14 @@ if is_excel:
             "family_total_cad": round(family["total"], 2),
             "family_market_value_cad": round(family["market_value_cad"], 2),
             "family_book_value_cad": round(family["book_value_cad"], 2),
-            "family_pnl_cad": round(family["pnl"], 2),
-            "family_pnl_pct": round(family["pnl_pct"], 4) if family["pnl_pct"] else None,
+            "family_unrealized_pnl_cad": round(family["pnl"], 2),
+            "family_unrealized_pnl_pct": round(family["pnl_pct"], 4) if family["pnl_pct"] else None,
+            "family_realized_pnl_cad": round(total_realized_cad, 2),
+            "family_total_sold_value": round(total_sold_mv, 2),
+            "family_total_book_cost_sold": round(total_bk_sold, 2),
+            "family_combined_pnl_cad": round(family["pnl"] + total_realized_cad, 2),
             "family_cash_cad": round(family["cash_cad"], 2),
+            "sold_positions_count": len(real_sold),
             "account_type_breakdown": {},
             "holders": {},
         }
@@ -690,13 +745,18 @@ if is_excel:
             h_active = active[active["holder"] == holder]
             h_cash_df = cash[cash["holder"] == holder] if "holder" in cash.columns else pd.DataFrame()
             h_sum = _summarize(h_active, h_cash_df)
+            h_sold = real_sold[real_sold["holder"] == holder] if not real_sold.empty and "holder" in real_sold.columns else pd.DataFrame()
+            h_realized = h_sold["realized_pnl_cad"].sum() if not h_sold.empty and "realized_pnl_cad" in h_sold.columns else 0
             holder_data = {
                 "display_name": _display_holder(holder),
                 "total_cad": round(h_sum["total"], 2),
                 "market_value_cad": round(h_sum["market_value_cad"], 2),
                 "book_value_cad": round(h_sum["book_value_cad"], 2),
-                "pnl_cad": round(h_sum["pnl"], 2),
-                "pnl_pct": round(h_sum["pnl_pct"], 4) if h_sum["pnl_pct"] else None,
+                "unrealized_pnl_cad": round(h_sum["pnl"], 2),
+                "unrealized_pnl_pct": round(h_sum["pnl_pct"], 4) if h_sum["pnl_pct"] else None,
+                "realized_pnl_cad": round(h_realized, 2),
+                "combined_pnl_cad": round(h_sum["pnl"] + h_realized, 2),
+                "sold_positions": len(h_sold),
                 "cash_cad": round(h_sum["cash_cad"], 2),
                 "accounts": {},
                 "holdings": [],
