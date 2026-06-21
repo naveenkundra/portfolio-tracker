@@ -1,0 +1,7 @@
+streamlit
+yfinance
+anthropic
+pandas
+plotly
+truststore
+openpyxl

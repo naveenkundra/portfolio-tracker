@@ -1,0 +1,14 @@
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+test_*.py
+test_*.xlsx
+claude-code-cheatsheet.md

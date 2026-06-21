@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_excel.py)",
+      "Bash(python -m streamlit run app.py --server.headless true --browser.gatherUsageStats false)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Start-Sleep -Seconds 5; Invoke-WebRequest -Uri http://localhost:8501 -UseBasicParsing | Select-Object StatusCode)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
