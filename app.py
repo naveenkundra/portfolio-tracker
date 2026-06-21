@@ -37,14 +37,23 @@ if uploaded_file:
     st.session_state["source"] = "upload"
     st.session_state["uploaded_file"] = uploaded_file
 
+import os
+DEFAULT_PORTFOLIO = os.path.join(os.path.dirname(__file__), "data", "portfolio.xlsx")
+
 if "source" not in st.session_state:
-    st.title("📊 Portfolio Tracker")
-    st.info("Upload a CSV or Excel file, or click **Use Sample Data** in the sidebar to get started.")
-    st.stop()
+    if os.path.exists(DEFAULT_PORTFOLIO):
+        st.session_state["source"] = "default"
+    else:
+        st.title("📊 Portfolio Tracker")
+        st.info("Upload a CSV or Excel file, or click **Use Sample Data** in the sidebar to get started.")
+        st.stop()
 
 try:
     if st.session_state["source"] == "sample":
         holdings_df = load_holdings("sample_holdings.csv")
+    elif st.session_state["source"] == "default":
+        is_excel = True
+        excel_df = load_excel(DEFAULT_PORTFOLIO)
     else:
         file = st.session_state["uploaded_file"]
         if file.name.endswith((".xlsx", ".xls")):
