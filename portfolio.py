@@ -1,10 +1,14 @@
 import json
-import ssl
 import pandas as pd
 import requests
 import streamlit as st
-import truststore
 import yfinance as yf
+
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 
 truststore.inject_into_ssl()
 _session = requests.Session()

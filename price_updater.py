@@ -1,5 +1,8 @@
-import truststore
-truststore.inject_into_ssl()
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 
 import pandas as pd
 import requests
