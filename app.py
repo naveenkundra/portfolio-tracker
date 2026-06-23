@@ -137,13 +137,8 @@ if is_excel:
     has_mv = "market_value_cad" in active.columns
     has_bv = "book_value_cad" in active.columns
 
-    # Display name mapping: holder → display label with gender
-    HOLDER_DISPLAY = {
-        "Naveen": "👨 Male",
-        "Shweta": "👩 Female",
-    }
     def _display_holder(name):
-        return HOLDER_DISPLAY.get(name, name)
+        return name
 
     # --- Global color styling ---
     PNL_CSS = """
