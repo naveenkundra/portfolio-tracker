@@ -242,167 +242,372 @@ if is_excel:
     m5.metric("Realized P&L (CAD)", _money(total_realized_cad))
     m6.metric("Cash (CAD)", _money(family["cash_cad"]))
 
-    # ── TODAY'S P&L (since last upload) ──
+    # ══════════════════════════════════════════════════════════
+    # LIVE MARKET DASHBOARD — appears when Refresh is clicked
+    # ══════════════════════════════════════════════════════════
     if live_prices_active:
+        import plotly.graph_objects as go
+
         st.divider()
-        # Build comparison DataFrame
+        st.markdown("### 📈 Live Market Dashboard")
+
+        # ── Build comparison data aggregated by parent_ticker ──
         ticker_col = "parent_ticker" if "parent_ticker" in active.columns else "ticker"
-        baseline_mv = baseline_active.set_index([baseline_active.index])[["market_value_cad"]].rename(columns={"market_value_cad": "excel_mv_cad"})
-        live_mv = active[["market_value_cad"]].rename(columns={"market_value_cad": "live_mv_cad"})
         delta_df = active[[ticker_col, "holder", "account_type", "currency", "units"]].copy()
+        delta_df["book_value_cad"] = active["book_value_cad"].values
         delta_df["excel_mv_cad"] = baseline_active["market_value_cad"].values
         delta_df["live_mv_cad"] = active["market_value_cad"].values
         delta_df["value_change"] = delta_df["live_mv_cad"] - delta_df["excel_mv_cad"]
-        delta_df["pct_change"] = (delta_df["value_change"] / delta_df["excel_mv_cad"]).where(delta_df["excel_mv_cad"] != 0)
+
+        # Aggregate by parent_ticker for the visual views
+        by_ticker = delta_df.groupby(ticker_col).agg(
+            excel_mv=("excel_mv_cad", "sum"),
+            live_mv=("live_mv_cad", "sum"),
+            book_value=("book_value_cad", "sum"),
+            change=("value_change", "sum"),
+            positions=("units", "count"),
+        ).reset_index()
+        by_ticker["move_pct"] = (by_ticker["change"] / by_ticker["excel_mv"]).where(by_ticker["excel_mv"] != 0)
+        by_ticker["total_return"] = (by_ticker["live_mv"] - by_ticker["book_value"])
+        by_ticker["total_return_pct"] = (by_ticker["total_return"] / by_ticker["book_value"]).where(by_ticker["book_value"] != 0)
+        gainers = by_ticker[by_ticker["change"] > 0].sort_values("change", ascending=False)
+        losers = by_ticker[by_ticker["change"] < 0].sort_values("change")
+        unchanged = by_ticker[by_ticker["change"] == 0]
 
         total_day_pnl = delta_df["value_change"].sum()
-        day_pnl_cls = "total-banner-gain" if total_day_pnl >= 0 else "total-banner-loss"
-        day_sign = "+" if total_day_pnl > 0 else ""
+        total_excel = delta_df["excel_mv_cad"].sum()
+        total_live = delta_df["live_mv_cad"].sum()
+        total_book = delta_df["book_value_cad"].sum()
+        day_pnl_pct = total_day_pnl / total_excel if total_excel else 0
 
-        st.markdown(f"""<div class="total-banner {day_pnl_cls}">
-            📈 <b>P&L Since Last Upload:</b> &nbsp;
-            <b>{day_sign}${total_day_pnl:,.0f}</b> &nbsp;|&nbsp;
-            Portfolio: ${delta_df['excel_mv_cad'].sum():,.0f} → ${delta_df['live_mv_cad'].sum():,.0f}
+        # ── SUMMARY BANNER ──
+        day_cls = "total-banner-gain" if total_day_pnl >= 0 else "total-banner-loss"
+        day_sign = "+" if total_day_pnl > 0 else ""
+        pct_sign = "+" if day_pnl_pct > 0 else ""
+        st.markdown(f"""<div class="total-banner {day_cls}">
+            <b>Since Last Upload:</b> &nbsp;
+            <b>{day_sign}${total_day_pnl:,.0f}</b> ({pct_sign}{day_pnl_pct:.2%}) &nbsp;|&nbsp;
+            Portfolio: ${total_excel:,.0f} &rarr; ${total_live:,.0f} &nbsp;|&nbsp;
+            Gainers: <span style="color:#2e7d32">{len(gainers)}</span> &nbsp;
+            Losers: <span style="color:#c62828">{len(losers)}</span> &nbsp;
+            Flat: {len(unchanged)}
         </div>""", unsafe_allow_html=True)
 
-        day_tab1, day_tab2, day_tab3, day_tab4 = st.tabs([
-            "📊 By Holding", "🏦 By Account Type", "👤 By Owner", "📈 Top Movers"
+        # ── OWNER SUMMARY CARDS ──
+        own_col1, own_col2 = st.columns(2)
+        for idx, holder in enumerate(holders):
+            h_delta = delta_df[delta_df["holder"] == holder]
+            h_change = h_delta["value_change"].sum()
+            h_excel = h_delta["excel_mv_cad"].sum()
+            h_live = h_delta["live_mv_cad"].sum()
+            h_pct = h_change / h_excel if h_excel else 0
+            h_cls = "summary-card-gain" if h_change >= 0 else "summary-card-loss"
+            h_sign = "+" if h_change > 0 else ""
+
+            with (own_col1 if idx == 0 else own_col2):
+                st.markdown(f"""<div class="summary-card {h_cls}">
+                    <b>{_display_holder(holder)}</b><br>
+                    {_pnl_html(h_change)} ({h_sign}{h_pct:.2%})<br>
+                    ${h_excel:,.0f} &rarr; ${h_live:,.0f}
+                </div>""", unsafe_allow_html=True)
+
+        # ── ACCOUNT TYPE SUMMARY CARDS ──
+        acc_types_live = [a for a in acc_type_order if a in delta_df["account_type"].dropna().unique()]
+        if acc_types_live:
+            acc_cards = st.columns(len(acc_types_live))
+            for col, at in zip(acc_cards, acc_types_live):
+                at_delta = delta_df[delta_df["account_type"] == at]
+                at_change = at_delta["value_change"].sum()
+                at_excel = at_delta["excel_mv_cad"].sum()
+                at_pct = at_change / at_excel if at_excel else 0
+                at_cls = "summary-card-gain" if at_change >= 0 else "summary-card-loss"
+                at_sign = "+" if at_change > 0 else ""
+                with col:
+                    st.markdown(f"""<div class="summary-card {at_cls}">
+                        <b>{at}</b><br>
+                        {_pnl_html(at_change)} ({at_sign}{at_pct:.2%})
+                    </div>""", unsafe_allow_html=True)
+
+        # ── TABBED ANALYSIS ──
+        ltab1, ltab2, ltab3, ltab4, ltab5, ltab6 = st.tabs([
+            "🗺️ P&L Map",
+            "📊 Gainers & Losers",
+            "📉 Waterfall",
+            "👤 By Owner",
+            "🏦 By Account Type",
+            "📋 Full Detail",
         ])
 
-        with day_tab1:
+        # ── TAB 1: TREEMAP — visual P&L sizing ──
+        with ltab1:
+            treemap_data = by_ticker[by_ticker["change"] != 0].copy()
+            if not treemap_data.empty:
+                treemap_data["abs_change"] = treemap_data["change"].abs().round(0).astype(int)
+                treemap_data["change_int"] = treemap_data["change"].round(0).astype(int)
+                treemap_data["excel_int"] = treemap_data["excel_mv"].round(0).astype(int)
+                treemap_data["live_int"] = treemap_data["live_mv"].round(0).astype(int)
+                treemap_data["direction"] = treemap_data["change"].apply(lambda x: "Gain" if x > 0 else "Loss")
+                treemap_data["pct_label"] = treemap_data["move_pct"].apply(
+                    lambda x: f"{x:+.1%}" if pd.notna(x) else "")
+                treemap_data["text_label"] = treemap_data.apply(
+                    lambda r: f"{r[ticker_col]}\n${r['change_int']:+,d}\n{r['pct_label']}", axis=1)
+                fig_tree = px.treemap(
+                    treemap_data, path=["direction", ticker_col], values="abs_change",
+                    color="change", color_continuous_scale=["#ef5350", "#ffcdd2", "#f5f5f5", "#c8e6c9", "#4caf50"],
+                    color_continuous_midpoint=0,
+                    custom_data=["text_label", "change_int", "pct_label", "excel_int", "live_int"],
+                    title="P&L Impact Map — size = dollar impact, color = direction",
+                )
+                fig_tree.update_traces(
+                    textinfo="text",
+                    texttemplate="%{customdata[0]}",
+                    hovertemplate="%{label}<br>Change: $%{customdata[1]:,d}<br>Move: %{customdata[2]}<br>Excel: $%{customdata[3]:,d}<br>Live: $%{customdata[4]:,d}<extra></extra>",
+                )
+                fig_tree.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=500, coloraxis_showscale=False)
+                st.plotly_chart(fig_tree, use_container_width=True)
+            else:
+                st.info("No price changes detected.")
+
+        # ── TAB 2: GAINERS & LOSERS — side by side ──
+        with ltab2:
+            g_col, l_col = st.columns(2)
+
+            with g_col:
+                st.markdown(f"#### Gainers ({len(gainers)})")
+                if not gainers.empty:
+                    fig_g = px.bar(
+                        gainers, x=ticker_col, y="change",
+                        text=gainers["change"].apply(lambda x: f"+${x:,.0f}"),
+                        color="move_pct", color_continuous_scale=["#c8e6c9", "#2e7d32"],
+                        title=f"Total: +${gainers['change'].sum():,.0f}",
+                    )
+                    fig_g.update_traces(hovertemplate="%{x}<br>+$%{y:,.0f}<extra></extra>", textposition="outside")
+                    fig_g.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=400, showlegend=False, coloraxis_showscale=False, yaxis_tickformat="$,.0f", yaxis_title="")
+                    st.plotly_chart(fig_g, use_container_width=True)
+
+                    g_table = gainers[[ticker_col, "excel_mv", "live_mv", "change", "move_pct", "total_return", "total_return_pct"]].copy()
+                    g_table.columns = ["Ticker", "Upload MV", "Live MV", "Change ($)", "Move %", "Total P&L", "Total Return %"]
+                    st.dataframe(g_table.style.format({
+                        "Upload MV": "${:,.0f}", "Live MV": "${:,.0f}",
+                        "Change ($)": lambda x: f"+${x:,.0f}", "Move %": lambda x: f"+{x:.2%}" if pd.notna(x) else "-",
+                        "Total P&L": lambda x: f"${x:,.0f}" if pd.notna(x) else "-",
+                        "Total Return %": lambda x: f"{x:.1%}" if pd.notna(x) else "-",
+                    }).map(_style_pnl, subset=["Change ($)", "Total P&L"]), use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No gainers")
+
+            with l_col:
+                st.markdown(f"#### Losers ({len(losers)})")
+                if not losers.empty:
+                    fig_l = px.bar(
+                        losers, x=ticker_col, y="change",
+                        text=losers["change"].apply(lambda x: f"-${abs(x):,.0f}"),
+                        color="move_pct", color_continuous_scale=["#c62828", "#ffcdd2"],
+                        title=f"Total: -${abs(losers['change'].sum()):,.0f}",
+                    )
+                    fig_l.update_traces(hovertemplate="%{x}<br>$%{y:,.0f}<extra></extra>", textposition="outside")
+                    fig_l.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=400, showlegend=False, coloraxis_showscale=False, yaxis_tickformat="$,.0f", yaxis_title="")
+                    st.plotly_chart(fig_l, use_container_width=True)
+
+                    l_table = losers[[ticker_col, "excel_mv", "live_mv", "change", "move_pct", "total_return", "total_return_pct"]].copy()
+                    l_table.columns = ["Ticker", "Upload MV", "Live MV", "Change ($)", "Move %", "Total P&L", "Total Return %"]
+                    st.dataframe(l_table.style.format({
+                        "Upload MV": "${:,.0f}", "Live MV": "${:,.0f}",
+                        "Change ($)": lambda x: f"-${abs(x):,.0f}", "Move %": lambda x: f"{x:.2%}" if pd.notna(x) else "-",
+                        "Total P&L": lambda x: f"${x:,.0f}" if pd.notna(x) else "-",
+                        "Total Return %": lambda x: f"{x:.1%}" if pd.notna(x) else "-",
+                    }).map(_style_pnl, subset=["Change ($)", "Total P&L"]), use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No losers")
+
+        # ── TAB 3: WATERFALL — P&L attribution ──
+        with ltab3:
+            wf = by_ticker[by_ticker["change"] != 0].sort_values("change", ascending=False).copy()
+            if not wf.empty:
+                wf_tickers = wf[ticker_col].tolist()
+                wf_values = wf["change"].tolist()
+
+                fig_wf = go.Figure(go.Waterfall(
+                    x=wf_tickers + ["NET"],
+                    y=wf_values + [sum(wf_values)],
+                    measure=["relative"] * len(wf_values) + ["total"],
+                    text=[f"${v:+,.0f}" for v in wf_values] + [f"${sum(wf_values):+,.0f}"],
+                    textposition="outside",
+                    increasing={"marker": {"color": "#4caf50"}},
+                    decreasing={"marker": {"color": "#ef5350"}},
+                    totals={"marker": {"color": "#1565c0"}},
+                    connector={"line": {"color": "#ccc"}},
+                ))
+                fig_wf.update_layout(
+                    title="P&L Attribution Waterfall — each bar shows contribution to total change",
+                    margin=dict(t=50, b=20, l=20, r=20), height=500,
+                    yaxis_tickformat="$,.0f", yaxis_title="P&L (CAD)",
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_wf, use_container_width=True)
+
+        # ── TAB 4: BY OWNER — Male vs Female breakdown ──
+        with ltab4:
+            for holder in holders:
+                h_delta = delta_df[delta_df["holder"] == holder]
+                h_change = h_delta["value_change"].sum()
+                h_excel = h_delta["excel_mv_cad"].sum()
+                h_live = h_delta["live_mv_cad"].sum()
+                h_pct = h_change / h_excel if h_excel else 0
+                h_sign = "+" if h_change > 0 else ""
+                h_cls = "owner-pnl-gain" if h_change >= 0 else "owner-pnl-loss"
+
+                st.markdown(f'#### {_display_holder(holder)} <span class="{h_cls}">{h_sign}${h_change:,.0f} ({h_sign}{h_pct:.2%})</span>', unsafe_allow_html=True)
+
+                # Owner's holdings aggregated by parent_ticker
+                h_by_ticker = h_delta.groupby(ticker_col).agg(
+                    excel_mv=("excel_mv_cad", "sum"),
+                    live_mv=("live_mv_cad", "sum"),
+                    book_value=("book_value_cad", "sum"),
+                    change=("value_change", "sum"),
+                ).reset_index()
+                h_by_ticker["move_pct"] = (h_by_ticker["change"] / h_by_ticker["excel_mv"]).where(h_by_ticker["excel_mv"] != 0)
+                h_by_ticker = h_by_ticker.sort_values("change")
+
+                if not h_by_ticker.empty:
+                    fig_owner = px.bar(
+                        h_by_ticker, x=ticker_col, y="change",
+                        color=h_by_ticker["change"].apply(lambda x: "Gain" if x >= 0 else "Loss"),
+                        color_discrete_map={"Gain": "#4caf50", "Loss": "#ef5350"},
+                        text=h_by_ticker["change"].apply(lambda x: f"${x:+,.0f}"),
+                    )
+                    fig_owner.update_traces(textposition="outside", hovertemplate="%{x}: $%{y:+,.0f}<extra></extra>")
+                    fig_owner.update_layout(margin=dict(t=20, b=10, l=10, r=10), height=350, showlegend=False, yaxis_tickformat="$,.0f", yaxis_title="P&L (CAD)")
+                    st.plotly_chart(fig_owner, use_container_width=True)
+
+                # By account type for this owner
+                h_by_acc = h_delta.groupby("account_type").agg(
+                    excel=("excel_mv_cad", "sum"), live=("live_mv_cad", "sum"),
+                    change=("value_change", "sum"), holdings=("units", "count"),
+                ).reset_index()
+                h_by_acc["move_pct"] = (h_by_acc["change"] / h_by_acc["excel"]).where(h_by_acc["excel"] != 0)
+                h_acc_total = pd.DataFrame([{
+                    "account_type": "TOTAL", "excel": h_by_acc["excel"].sum(),
+                    "live": h_by_acc["live"].sum(), "change": h_by_acc["change"].sum(),
+                    "holdings": h_by_acc["holdings"].sum(),
+                    "move_pct": h_by_acc["change"].sum() / h_by_acc["excel"].sum() if h_by_acc["excel"].sum() else None,
+                }])
+                h_by_acc = pd.concat([h_by_acc, h_acc_total], ignore_index=True)
+                h_by_acc.columns = ["Account Type", "Upload MV", "Live MV", "P&L (CAD)", "Holdings", "Move %"]
+
+                def _style_row_total(row):
+                    if row["Account Type"] == "TOTAL":
+                        return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                    return [""] * len(row)
+
+                st.dataframe(h_by_acc.style.format({
+                    "Upload MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
+                    "Live MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
+                    "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
+                    "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "-",
+                }).apply(_style_row_total, axis=1).map(_style_pnl, subset=["P&L (CAD)", "Move %"]),
+                    use_container_width=True, hide_index=True)
+                st.divider()
+
+        # ── TAB 5: BY ACCOUNT TYPE ──
+        with ltab5:
+            for at in acc_types_live:
+                at_delta = delta_df[delta_df["account_type"] == at]
+                at_change = at_delta["value_change"].sum()
+                at_excel = at_delta["excel_mv_cad"].sum()
+                at_pct = at_change / at_excel if at_excel else 0
+                at_sign = "+" if at_change > 0 else ""
+                at_cls = "owner-pnl-gain" if at_change >= 0 else "owner-pnl-loss"
+
+                st.markdown(f'#### {at} <span class="{at_cls}">{at_sign}${at_change:,.0f} ({at_sign}{at_pct:.2%})</span>', unsafe_allow_html=True)
+
+                # By owner within this account type
+                at_by_owner = at_delta.groupby("holder").agg(
+                    excel=("excel_mv_cad", "sum"), live=("live_mv_cad", "sum"),
+                    change=("value_change", "sum"), holdings=("units", "count"),
+                ).reset_index()
+                at_by_owner["move_pct"] = (at_by_owner["change"] / at_by_owner["excel"]).where(at_by_owner["excel"] != 0)
+                at_by_owner["holder"] = at_by_owner["holder"].map(_display_holder)
+                at_own_total = pd.DataFrame([{
+                    "holder": "TOTAL", "excel": at_by_owner["excel"].sum(),
+                    "live": at_by_owner["live"].sum(), "change": at_by_owner["change"].sum(),
+                    "holdings": at_by_owner["holdings"].sum(),
+                    "move_pct": at_by_owner["change"].sum() / at_by_owner["excel"].sum() if at_by_owner["excel"].sum() else None,
+                }])
+                at_by_owner = pd.concat([at_by_owner, at_own_total], ignore_index=True)
+                at_by_owner.columns = ["Owner", "Upload MV", "Live MV", "P&L (CAD)", "Holdings", "Move %"]
+
+                def _style_at_total(row):
+                    if row["Owner"] == "TOTAL":
+                        return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                    return [""] * len(row)
+
+                st.dataframe(at_by_owner.style.format({
+                    "Upload MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
+                    "Live MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
+                    "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
+                    "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "-",
+                }).apply(_style_at_total, axis=1).map(_style_pnl, subset=["P&L (CAD)", "Move %"]),
+                    use_container_width=True, hide_index=True)
+
+                # Holdings within this account type
+                at_by_ticker = at_delta.groupby(ticker_col).agg(
+                    excel_mv=("excel_mv_cad", "sum"), live_mv=("live_mv_cad", "sum"),
+                    change=("value_change", "sum"),
+                ).reset_index()
+                at_by_ticker["move_pct"] = (at_by_ticker["change"] / at_by_ticker["excel_mv"]).where(at_by_ticker["excel_mv"] != 0)
+                at_by_ticker = at_by_ticker.sort_values("change")
+                if not at_by_ticker.empty:
+                    fig_at = px.bar(
+                        at_by_ticker, x=ticker_col, y="change",
+                        color=at_by_ticker["change"].apply(lambda x: "Gain" if x >= 0 else "Loss"),
+                        color_discrete_map={"Gain": "#4caf50", "Loss": "#ef5350"},
+                        text=at_by_ticker["change"].apply(lambda x: f"${x:+,.0f}"),
+                    )
+                    fig_at.update_traces(textposition="outside", hovertemplate="%{x}: $%{y:+,.0f}<extra></extra>")
+                    fig_at.update_layout(margin=dict(t=20, b=10, l=10, r=10), height=300, showlegend=False, yaxis_tickformat="$,.0f", yaxis_title="")
+                    st.plotly_chart(fig_at, use_container_width=True)
+                st.divider()
+
+        # ── TAB 6: FULL DETAIL TABLE ──
+        with ltab6:
             detail = delta_df.copy()
             detail["holder"] = detail["holder"].map(_display_holder)
-            detail.columns = [c.replace("_", " ").title() if c not in ("value_change", "pct_change") else c for c in detail.columns]
-            detail = detail.rename(columns={"value_change": "P&L (CAD)", "pct_change": "Move %"})
+            detail["book_pnl"] = detail["live_mv_cad"] - detail["book_value_cad"]
+            detail["pct_change"] = (detail["value_change"] / detail["excel_mv_cad"]).where(detail["excel_mv_cad"] != 0)
+            detail.columns = [c.replace("_", " ").title() if c not in ("value_change", "pct_change", "book_pnl") else c for c in detail.columns]
+            detail = detail.rename(columns={"value_change": "Change ($)", "pct_change": "Move %", "book_pnl": "Total P&L"})
 
-            # Totals row
             totals = {col: "" for col in detail.columns}
             totals[detail.columns[0]] = "TOTAL"
-            for c in ["Excel Mv Cad", "Live Mv Cad", "P&L (CAD)"]:
-                if c in detail.columns:
+            for c in detail.columns:
+                if any(k in c.lower() for k in ["mv", "cad", "change", "p&l", "book"]):
                     totals[c] = pd.to_numeric(detail[c], errors="coerce").sum()
-            total_excel = pd.to_numeric(detail.get("Excel Mv Cad"), errors="coerce").sum()
-            total_pnl = pd.to_numeric(detail.get("P&L (CAD)"), errors="coerce").sum()
-            totals["Move %"] = total_pnl / total_excel if total_excel else None
+            tot_excel = pd.to_numeric(detail.get("Excel Mv Cad"), errors="coerce").sum()
+            tot_chg = pd.to_numeric(detail.get("Change ($)"), errors="coerce").sum()
+            totals["Move %"] = tot_chg / tot_excel if tot_excel else None
             detail = pd.concat([detail, pd.DataFrame([totals])], ignore_index=True)
 
             dfmt = {}
             for col in detail.columns:
-                if any(k in col.lower() for k in ["mv", "cad", "p&l"]):
-                    dfmt[col] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
-                elif "move" in col.lower() or "%" in col.lower():
-                    dfmt[col] = lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+                if any(k in col.lower() for k in ["mv", "cad", "change", "p&l", "book"]):
+                    dfmt[col] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("" if isinstance(x, str) else "-")
+                elif "move" in col.lower() or "%" in col:
+                    dfmt[col] = lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "-"
                 elif "units" in col.lower():
-                    dfmt[col] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+                    dfmt[col] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "-"
 
-            pnl_cols = [c for c in detail.columns if "p&l" in c.lower() or "move" in c.lower()]
+            pnl_cols = [c for c in detail.columns if any(k in c.lower() for k in ["change", "move", "p&l"])]
 
-            def _style_day_total(row):
+            def _style_detail_total(row):
                 if row.iloc[0] == "TOTAL":
                     return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
                 return [""] * len(row)
 
-            styled = detail.style.format(dfmt).apply(_style_day_total, axis=1)
+            styled = detail.style.format(dfmt).apply(_style_detail_total, axis=1)
             if pnl_cols:
                 styled = styled.map(_style_pnl, subset=pnl_cols)
             st.dataframe(styled, use_container_width=True, hide_index=True)
-
-        with day_tab2:
-            acc_delta = delta_df.groupby("account_type").agg(
-                excel=("excel_mv_cad", "sum"),
-                live=("live_mv_cad", "sum"),
-                change=("value_change", "sum"),
-                holdings=("units", "count"),
-            ).reset_index()
-            acc_delta["move_pct"] = (acc_delta["change"] / acc_delta["excel"]).where(acc_delta["excel"] != 0)
-            # Total row
-            acc_total = pd.DataFrame([{
-                "account_type": "TOTAL",
-                "excel": acc_delta["excel"].sum(),
-                "live": acc_delta["live"].sum(),
-                "change": acc_delta["change"].sum(),
-                "holdings": acc_delta["holdings"].sum(),
-                "move_pct": acc_delta["change"].sum() / acc_delta["excel"].sum() if acc_delta["excel"].sum() else None,
-            }])
-            acc_delta = pd.concat([acc_delta, acc_total], ignore_index=True)
-            acc_delta.columns = ["Account Type", "Excel MV (CAD)", "Live MV (CAD)", "P&L (CAD)", "Holdings", "Move %"]
-
-            afmt = {
-                "Excel MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
-                "Live MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
-                "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
-                "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "—",
-            }
-
-            def _style_acc_total(row):
-                if row["Account Type"] == "TOTAL":
-                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                return [""] * len(row)
-
-            styled_acc = acc_delta.style.format(afmt).apply(_style_acc_total, axis=1).map(
-                _style_pnl, subset=["P&L (CAD)", "Move %"]
-            )
-            st.dataframe(styled_acc, use_container_width=True, hide_index=True)
-
-        with day_tab3:
-            owner_delta = delta_df.groupby("holder").agg(
-                excel=("excel_mv_cad", "sum"),
-                live=("live_mv_cad", "sum"),
-                change=("value_change", "sum"),
-                holdings=("units", "count"),
-            ).reset_index()
-            owner_delta["move_pct"] = (owner_delta["change"] / owner_delta["excel"]).where(owner_delta["excel"] != 0)
-            owner_delta["holder"] = owner_delta["holder"].map(_display_holder)
-            # Total row
-            owner_total = pd.DataFrame([{
-                "holder": "TOTAL",
-                "excel": owner_delta["excel"].sum(),
-                "live": owner_delta["live"].sum(),
-                "change": owner_delta["change"].sum(),
-                "holdings": owner_delta["holdings"].sum(),
-                "move_pct": owner_delta["change"].sum() / owner_delta["excel"].sum() if owner_delta["excel"].sum() else None,
-            }])
-            owner_delta = pd.concat([owner_delta, owner_total], ignore_index=True)
-            owner_delta.columns = ["Owner", "Excel MV (CAD)", "Live MV (CAD)", "P&L (CAD)", "Holdings", "Move %"]
-
-            ofmt = {
-                "Excel MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
-                "Live MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
-                "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
-                "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "—",
-            }
-
-            def _style_owner_total(row):
-                if row["Owner"] == "TOTAL":
-                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                return [""] * len(row)
-
-            styled_own = owner_delta.style.format(ofmt).apply(_style_owner_total, axis=1).map(
-                _style_pnl, subset=["P&L (CAD)", "Move %"]
-            )
-            st.dataframe(styled_own, use_container_width=True, hide_index=True)
-
-        with day_tab4:
-            movers = delta_df[[ticker_col, "holder", "account_type", "value_change"]].copy()
-            movers = movers.groupby(ticker_col)["value_change"].sum().reset_index()
-            movers = movers[movers["value_change"].abs() > 0].sort_values("value_change")
-            if not movers.empty:
-                fig_movers = px.bar(
-                    movers, x=ticker_col, y="value_change",
-                    color=movers["value_change"].apply(lambda x: "Gain" if x >= 0 else "Loss"),
-                    color_discrete_map={"Gain": "#4caf50", "Loss": "#ef5350"},
-                    title="P&L Since Last Upload — by Holding (CAD)",
-                )
-                fig_movers.update_traces(
-                    hovertemplate="%{x}: $%{y:,.0f}<extra></extra>",
-                    texttemplate="$%{y:,.0f}", textposition="outside",
-                )
-                fig_movers.update_layout(
-                    margin=dict(t=40, b=20, l=20, r=20), height=450,
-                    showlegend=False, yaxis_title="P&L (CAD)", xaxis_title="",
-                    yaxis_tickformat="$,.0f",
-                )
-                st.plotly_chart(fig_movers, use_container_width=True)
 
         st.divider()
 
