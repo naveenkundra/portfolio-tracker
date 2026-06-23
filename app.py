@@ -47,10 +47,44 @@ if uploaded_file:
     st.session_state["uploaded_file"] = uploaded_file
 
 import os
+import io
+import base64
+
 DEFAULT_PORTFOLIO = os.path.join(os.path.dirname(__file__), "data", "portfolio.xlsx")
 
+def _load_portfolio_from_secrets():
+    """Load portfolio Excel from base64-encoded Streamlit secret(s).
+
+    Supports both a single PORTFOLIO_DATA key and chunked keys
+    (PORTFOLIO_DATA_1, _2, ...) to work around the Windows 32KB
+    environment-variable limit that Streamlit enforces.
+    """
+    try:
+        chunks = []
+        i = 1
+        while True:
+            key = f"PORTFOLIO_DATA_{i}"
+            try:
+                chunks.append(st.secrets[key])
+                i += 1
+            except KeyError:
+                break
+        if chunks:
+            b64 = "".join(chunks)
+        else:
+            b64 = st.secrets["PORTFOLIO_DATA"]
+        if b64 and b64 != "your-base64-data-here":
+            return io.BytesIO(base64.b64decode(b64))
+    except (KeyError, FileNotFoundError):
+        pass
+    return None
+
 if "source" not in st.session_state:
-    if os.path.exists(DEFAULT_PORTFOLIO):
+    secrets_file = _load_portfolio_from_secrets()
+    if secrets_file:
+        st.session_state["source"] = "secrets"
+        st.session_state["_secrets_file"] = secrets_file
+    elif os.path.exists(DEFAULT_PORTFOLIO):
         st.session_state["source"] = "default"
     else:
         st.title("📊 Portfolio Tracker")
@@ -60,9 +94,12 @@ if "source" not in st.session_state:
 try:
     if st.session_state["source"] == "sample":
         holdings_df = load_holdings("sample_holdings.csv")
-    elif st.session_state["source"] == "default":
+    elif st.session_state["source"] in ("default", "secrets"):
         is_excel = True
-        excel_df = load_excel(DEFAULT_PORTFOLIO)
+        if st.session_state["source"] == "secrets":
+            excel_df = load_excel(st.session_state["_secrets_file"])
+        else:
+            excel_df = load_excel(DEFAULT_PORTFOLIO)
     else:
         file = st.session_state["uploaded_file"]
         if file.name.endswith((".xlsx", ".xls")):
@@ -84,7 +121,9 @@ if is_excel:
     cash = splits["cash"]
     sold = splits["sold"]
 
-    # Live price refresh
+    # Live price refresh — keep Excel baseline for P&L comparison
+    baseline_active = active.copy()
+    live_prices_active = False
     if st.session_state.get("live_prices"):
         with st.spinner("Fetching live market prices..."):
             active, cash, live_fx_rate, price_timestamp, price_errors = update_portfolio_prices(active, cash)
@@ -93,6 +132,7 @@ if is_excel:
                 st.warning(f"Price update: {err}")
         st.sidebar.caption(f"Prices as of: {price_timestamp}")
         st.sidebar.caption(f"USD/CAD: {live_fx_rate:.4f}")
+        live_prices_active = True
 
     has_mv = "market_value_cad" in active.columns
     has_bv = "book_value_cad" in active.columns
@@ -201,6 +241,170 @@ if is_excel:
               delta=_pct(family["pnl_pct"]) if family["pnl_pct"] else None)
     m5.metric("Realized P&L (CAD)", _money(total_realized_cad))
     m6.metric("Cash (CAD)", _money(family["cash_cad"]))
+
+    # ── TODAY'S P&L (since last upload) ──
+    if live_prices_active:
+        st.divider()
+        # Build comparison DataFrame
+        ticker_col = "parent_ticker" if "parent_ticker" in active.columns else "ticker"
+        baseline_mv = baseline_active.set_index([baseline_active.index])[["market_value_cad"]].rename(columns={"market_value_cad": "excel_mv_cad"})
+        live_mv = active[["market_value_cad"]].rename(columns={"market_value_cad": "live_mv_cad"})
+        delta_df = active[[ticker_col, "holder", "account_type", "currency", "units"]].copy()
+        delta_df["excel_mv_cad"] = baseline_active["market_value_cad"].values
+        delta_df["live_mv_cad"] = active["market_value_cad"].values
+        delta_df["value_change"] = delta_df["live_mv_cad"] - delta_df["excel_mv_cad"]
+        delta_df["pct_change"] = (delta_df["value_change"] / delta_df["excel_mv_cad"]).where(delta_df["excel_mv_cad"] != 0)
+
+        total_day_pnl = delta_df["value_change"].sum()
+        day_pnl_cls = "total-banner-gain" if total_day_pnl >= 0 else "total-banner-loss"
+        day_sign = "+" if total_day_pnl > 0 else ""
+
+        st.markdown(f"""<div class="total-banner {day_pnl_cls}">
+            📈 <b>P&L Since Last Upload:</b> &nbsp;
+            <b>{day_sign}${total_day_pnl:,.0f}</b> &nbsp;|&nbsp;
+            Portfolio: ${delta_df['excel_mv_cad'].sum():,.0f} → ${delta_df['live_mv_cad'].sum():,.0f}
+        </div>""", unsafe_allow_html=True)
+
+        day_tab1, day_tab2, day_tab3, day_tab4 = st.tabs([
+            "📊 By Holding", "🏦 By Account Type", "👤 By Owner", "📈 Top Movers"
+        ])
+
+        with day_tab1:
+            detail = delta_df.copy()
+            detail["holder"] = detail["holder"].map(_display_holder)
+            detail.columns = [c.replace("_", " ").title() if c not in ("value_change", "pct_change") else c for c in detail.columns]
+            detail = detail.rename(columns={"value_change": "P&L (CAD)", "pct_change": "Move %"})
+
+            # Totals row
+            totals = {col: "" for col in detail.columns}
+            totals[detail.columns[0]] = "TOTAL"
+            for c in ["Excel Mv Cad", "Live Mv Cad", "P&L (CAD)"]:
+                if c in detail.columns:
+                    totals[c] = pd.to_numeric(detail[c], errors="coerce").sum()
+            total_excel = pd.to_numeric(detail.get("Excel Mv Cad"), errors="coerce").sum()
+            total_pnl = pd.to_numeric(detail.get("P&L (CAD)"), errors="coerce").sum()
+            totals["Move %"] = total_pnl / total_excel if total_excel else None
+            detail = pd.concat([detail, pd.DataFrame([totals])], ignore_index=True)
+
+            dfmt = {}
+            for col in detail.columns:
+                if any(k in col.lower() for k in ["mv", "cad", "p&l"]):
+                    dfmt[col] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+                elif "move" in col.lower() or "%" in col.lower():
+                    dfmt[col] = lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+                elif "units" in col.lower():
+                    dfmt[col] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+
+            pnl_cols = [c for c in detail.columns if "p&l" in c.lower() or "move" in c.lower()]
+
+            def _style_day_total(row):
+                if row.iloc[0] == "TOTAL":
+                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                return [""] * len(row)
+
+            styled = detail.style.format(dfmt).apply(_style_day_total, axis=1)
+            if pnl_cols:
+                styled = styled.map(_style_pnl, subset=pnl_cols)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        with day_tab2:
+            acc_delta = delta_df.groupby("account_type").agg(
+                excel=("excel_mv_cad", "sum"),
+                live=("live_mv_cad", "sum"),
+                change=("value_change", "sum"),
+                holdings=("units", "count"),
+            ).reset_index()
+            acc_delta["move_pct"] = (acc_delta["change"] / acc_delta["excel"]).where(acc_delta["excel"] != 0)
+            # Total row
+            acc_total = pd.DataFrame([{
+                "account_type": "TOTAL",
+                "excel": acc_delta["excel"].sum(),
+                "live": acc_delta["live"].sum(),
+                "change": acc_delta["change"].sum(),
+                "holdings": acc_delta["holdings"].sum(),
+                "move_pct": acc_delta["change"].sum() / acc_delta["excel"].sum() if acc_delta["excel"].sum() else None,
+            }])
+            acc_delta = pd.concat([acc_delta, acc_total], ignore_index=True)
+            acc_delta.columns = ["Account Type", "Excel MV (CAD)", "Live MV (CAD)", "P&L (CAD)", "Holdings", "Move %"]
+
+            afmt = {
+                "Excel MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
+                "Live MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
+                "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
+                "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "—",
+            }
+
+            def _style_acc_total(row):
+                if row["Account Type"] == "TOTAL":
+                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                return [""] * len(row)
+
+            styled_acc = acc_delta.style.format(afmt).apply(_style_acc_total, axis=1).map(
+                _style_pnl, subset=["P&L (CAD)", "Move %"]
+            )
+            st.dataframe(styled_acc, use_container_width=True, hide_index=True)
+
+        with day_tab3:
+            owner_delta = delta_df.groupby("holder").agg(
+                excel=("excel_mv_cad", "sum"),
+                live=("live_mv_cad", "sum"),
+                change=("value_change", "sum"),
+                holdings=("units", "count"),
+            ).reset_index()
+            owner_delta["move_pct"] = (owner_delta["change"] / owner_delta["excel"]).where(owner_delta["excel"] != 0)
+            owner_delta["holder"] = owner_delta["holder"].map(_display_holder)
+            # Total row
+            owner_total = pd.DataFrame([{
+                "holder": "TOTAL",
+                "excel": owner_delta["excel"].sum(),
+                "live": owner_delta["live"].sum(),
+                "change": owner_delta["change"].sum(),
+                "holdings": owner_delta["holdings"].sum(),
+                "move_pct": owner_delta["change"].sum() / owner_delta["excel"].sum() if owner_delta["excel"].sum() else None,
+            }])
+            owner_delta = pd.concat([owner_delta, owner_total], ignore_index=True)
+            owner_delta.columns = ["Owner", "Excel MV (CAD)", "Live MV (CAD)", "P&L (CAD)", "Holdings", "Move %"]
+
+            ofmt = {
+                "Excel MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
+                "Live MV (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
+                "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else x,
+                "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "—",
+            }
+
+            def _style_owner_total(row):
+                if row["Owner"] == "TOTAL":
+                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                return [""] * len(row)
+
+            styled_own = owner_delta.style.format(ofmt).apply(_style_owner_total, axis=1).map(
+                _style_pnl, subset=["P&L (CAD)", "Move %"]
+            )
+            st.dataframe(styled_own, use_container_width=True, hide_index=True)
+
+        with day_tab4:
+            movers = delta_df[[ticker_col, "holder", "account_type", "value_change"]].copy()
+            movers = movers.groupby(ticker_col)["value_change"].sum().reset_index()
+            movers = movers[movers["value_change"].abs() > 0].sort_values("value_change")
+            if not movers.empty:
+                fig_movers = px.bar(
+                    movers, x=ticker_col, y="value_change",
+                    color=movers["value_change"].apply(lambda x: "Gain" if x >= 0 else "Loss"),
+                    color_discrete_map={"Gain": "#4caf50", "Loss": "#ef5350"},
+                    title="P&L Since Last Upload — by Holding (CAD)",
+                )
+                fig_movers.update_traces(
+                    hovertemplate="%{x}: $%{y:,.0f}<extra></extra>",
+                    texttemplate="$%{y:,.0f}", textposition="outside",
+                )
+                fig_movers.update_layout(
+                    margin=dict(t=40, b=20, l=20, r=20), height=450,
+                    showlegend=False, yaxis_title="P&L (CAD)", xaxis_title="",
+                    yaxis_tickformat="$,.0f",
+                )
+                st.plotly_chart(fig_movers, use_container_width=True)
+
+        st.divider()
 
     # ── Family-level account type breakdown ──
     family_acc_types = sorted(active["account_type"].dropna().unique()) if "account_type" in active.columns else []

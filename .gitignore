@@ -12,3 +12,6 @@ build/
 test_*.py
 test_*.xlsx
 claude-code-cheatsheet.md
+data/
+portfolio_b64.txt
+encode_portfolio.py
