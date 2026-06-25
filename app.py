@@ -122,7 +122,7 @@ except ValueError as e:
     st.error(str(e))
     st.stop()
 
-if st.session_state.get("source") == "demo":
+if force_demo or st.session_state.get("source") == "demo":
     st.markdown("""<div style="background-color: #c62828; color: white; padding: 12px 24px;
         border-radius: 8px; text-align: center; font-weight: 700; font-size: 1.2em;
         margin-bottom: 16px;">
