@@ -39,7 +39,7 @@ COLUMN_MAP = {
 }
 
 PLATFORM_NAMES = {
-    "DI": "Disnat/Desjardins",
+    "DI": "TD Direct Investing",
     "ET": "E*Trade/National Bank",
     "WS": "Wealthsimple",
 }
