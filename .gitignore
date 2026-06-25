@@ -15,3 +15,5 @@ claude-code-cheatsheet.md
 data/
 portfolio_b64.txt
 encode_portfolio.py
+update_portfolio.py
+create_sample.py

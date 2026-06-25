@@ -14,11 +14,13 @@ Tracks a multi-person, multi-account investment portfolio with real-time price u
   - P&L Impact Treemap (size = dollar impact, color = gain/loss direction)
   - Side-by-side Gainers & Losers with charts and tables
   - Waterfall attribution chart showing each holding's contribution to total P&L
-  - Owner-level breakdown (Male / Female)
+  - Owner-level breakdown
   - Account-type breakdown (Cash / TFSA / RSP / RESP)
   - Full position-level detail table
+- **Portfolio Update & Download** — after refreshing prices, download the updated Excel with live values baked in, or copy base64-encoded data to update Streamlit secrets directly from the app
 - **Realized P&L Tracking** — sold positions with book cost, sale proceeds, and realized gains/losses
 - **Restatement Views** — portfolio restated by account type with per-owner breakdowns and grand total cross-tab
+- **Demo Mode** — runs with sample data when no portfolio is configured, so anyone can explore the dashboard without real data
 - **AI Analysis** (powered by Claude) — six analysis modules:
   - Portfolio Insights — health score, concentration risk, top winners/losers
   - Rebalance Plan — specific buy/sell recommendations with live web search for current market context
@@ -27,56 +29,69 @@ Tracks a multi-person, multi-account investment portfolio with real-time price u
   - News & Research — live web search for latest news, earnings, and outlook per holding
   - Ask Anything — free-form Q&A against your actual portfolio data
 
+### Demo Mode
+
+The app ships with `sample_portfolio.xlsx` containing fake data. When no real portfolio is configured (no Streamlit secrets and no local `data/portfolio.xlsx`), the app automatically loads this sample and shows a "Demo Mode" banner. This lets anyone explore the full dashboard without exposing real financial data.
+
 ### Data Privacy
 
-Portfolio data is **never stored in the GitHub repo**. The Excel file is base64-encoded and stored in Streamlit Cloud's encrypted secrets management. Holder names are masked during encoding. The repo contains only application code.
+Portfolio data is **never stored in the GitHub repo**. The Excel file is base64-encoded and stored in Streamlit Cloud's encrypted secrets management. Holder names are masked during encoding. The repo contains only application code and sample data.
 
 ## Architecture
 
 ```
 app.py                  Main Streamlit application (dashboard + AI tabs)
-├── excel_converter.py  Excel import pipeline (column mapping, cleaning, splitting)
-├── portfolio.py        CSV-based portfolio loader + yfinance price fetcher
-├── price_updater.py    Live price fetcher (Yahoo Finance API + USD/CAD FX rate)
-└── ai.py               Claude AI integration (insights, rebalance, news, risk, tax, chat)
++-- excel_converter.py  Excel import/export pipeline (column mapping, cleaning, splitting)
++-- portfolio.py        CSV-based portfolio loader + yfinance price fetcher
++-- price_updater.py    Live price fetcher (Yahoo Finance API + USD/CAD FX rate)
++-- ai.py               Claude AI integration (insights, rebalance, news, risk, tax, chat)
 
-encode_portfolio.py     Local-only helper to encode Excel → base64 for secrets (gitignored)
-data/portfolio.xlsx     Local-only portfolio file (gitignored)
+sample_portfolio.xlsx   Sample Excel with fake data for demo mode (committed)
+encode_portfolio.py     Local-only: encode Excel to base64 with name masking (gitignored)
+update_portfolio.py     Local-only: fetch live prices and update Excel + secrets (gitignored)
+data/portfolio.xlsx     Local-only: real portfolio file (gitignored)
 ```
 
 ### Data Flow
 
 ```
 Excel File (local)
-  → encode_portfolio.py masks names, encodes to base64
-  → base64 chunks stored in Streamlit Cloud Secrets
-  → app.py decodes on startup → load_excel() → split_holdings()
-  → Dashboard renders active holdings, cash, sold positions
-  → "Refresh Live Prices" → price_updater.py fetches from Yahoo Finance
-  → Live Market Dashboard compares live vs uploaded values
+  -> encode_portfolio.py masks names, encodes to base64
+  -> base64 chunks stored in Streamlit Cloud Secrets
+  -> app.py decodes on startup -> load_excel() -> split_holdings()
+  -> Dashboard renders active holdings, cash, sold positions
+  -> "Refresh Live Prices" -> price_updater.py fetches from Yahoo Finance
+  -> Live Market Dashboard compares live vs uploaded values
+  -> "Download Updated Portfolio" -> exports Excel with live prices baked in
 ```
 
 ### Excel Format
 
-The app expects an Excel file with these columns (case-insensitive):
+The app expects an Excel file with these columns (case-insensitive). See `sample_portfolio.xlsx` for a color-coded template showing which columns are user-input (green), calculated (orange), or lookup (blue).
 
-| Column | Description |
-|---|---|
-| TICK | Ticker symbol (.NE = Canadian NEO exchange) |
-| Par_TICK | Parent ticker (e.g., MSFT for MSFT.NE) |
-| Name | Account holder |
-| Platf | Platform code (DI = TD Direct Investing, ET = E*Trade/National Bank, WS = Wealthsimple) |
-| Acc_Type | Account type (Cash, TFSA, RSP, RESP) |
-| Curr | Currency (CAD, USD) |
-| Units | Number of shares/units |
-| Book_Pr_U | Cost per unit |
-| Book_Value_CAD | Total book value in CAD |
-| MK_Val_CAD | Market value in CAD |
-| T_Cash_Bal_In_CAD | Cash balance in CAD |
+| Column | Type | Description |
+|---|---|---|
+| Date_Updated | Input | Date of snapshot |
+| TICK | Input | Ticker symbol (.NE = Canadian NEO exchange) |
+| Par_TICK | Input | Parent ticker (e.g., MSFT for MSFT.NE) |
+| Name | Input | Account holder |
+| Platf | Input | Platform code (DI = TD Direct Investing, ET = E*Trade/National Bank, WS = Wealthsimple) |
+| Acc_Type | Input | Account type (Cash, TFSA, RSP, RESP) |
+| Curr | Input | Currency (CAD, USD) |
+| Inv_Type | Input | Investment type (Stock, Index, Cash) |
+| Book_Pr_U | Input | Cost per unit (purchase price) |
+| Units | Input | Shares currently held |
+| Mkt_Val | Input | Market value from brokerage |
+| Ex_Rt | Lookup | USD/CAD exchange rate |
+| Book_P | Calc | = Units x Book_Pr_U |
+| USD_Ind | Calc | = 1 if CAD, else Ex_Rt |
+| Book_Value_CAD | Calc | = Book_P x USD_Ind |
+| MK_Val_CAD | Calc | = Mkt_Val x USD_Ind |
+| Ret_Abs | Calc | = Mkt_Val - Book_P |
+| Ret_CAD | Calc | = MK_Val_CAD - Book_Value_CAD |
+| %ge Return | Calc | = Ret_Abs / Book_P |
 
-A sample file with fake data is included: **`sample_portfolio.xlsx`**. Use it as a template for your own data.
-
-See `excel_converter.py` → `COLUMN_MAP` for the full column mapping.
+See `excel_converter.py` -> `COLUMN_MAP` for the full 34-column mapping.
 
 ## Setup
 
@@ -85,7 +100,16 @@ See `excel_converter.py` → `COLUMN_MAP` for the full column mapping.
 - Python 3.10+
 - An [Anthropic API key](https://console.anthropic.com/) for AI features
 
-### Local Development
+### Quick Start (Demo Mode)
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The app will load `sample_portfolio.xlsx` automatically and run in demo mode.
+
+### Local Development (Real Data)
 
 ```bash
 pip install -r requirements.txt
@@ -111,7 +135,7 @@ streamlit run app.py
    ```bash
    python encode_portfolio.py path/to/your_portfolio.xlsx
    ```
-4. In Streamlit Cloud → Settings → Secrets, add:
+4. In Streamlit Cloud -> Settings -> Secrets, add:
    ```toml
    ANTHROPIC_API_KEY = "your-api-key"
    PORTFOLIO_DATA_1 = "base64-chunk-1..."
@@ -122,13 +146,21 @@ streamlit run app.py
 
 ### Updating Portfolio Data
 
-When you have a new Excel file:
+**From the app:** Click "Refresh Live Prices", then use the "Download Updated Portfolio" button in the sidebar. The "Update Streamlit Secrets" expander shows the base64 chunks ready to copy.
+
+**From the command line:**
 
 ```bash
-python encode_portfolio.py path/to/new_portfolio.xlsx
+python update_portfolio.py data/portfolio.xlsx
 ```
 
-Then copy the contents of `portfolio_b64.txt` into the Streamlit Cloud secrets, replacing the old `PORTFOLIO_DATA_*` keys. Remove any extra chunks if the new file produces fewer.
+This fetches live prices, saves `data/portfolio_updated.xlsx`, and re-encodes to `portfolio_b64.txt` with name masking. Copy the contents of `portfolio_b64.txt` into Streamlit Cloud secrets.
+
+**Manual update:** Edit your Excel, then re-encode:
+
+```bash
+python encode_portfolio.py path/to/updated_portfolio.xlsx
+```
 
 ## Dependencies
 
@@ -139,7 +171,7 @@ Then copy the contents of `portfolio_b64.txt` into the Streamlit Cloud secrets, 
 | plotly | Interactive charts (treemap, waterfall, bar, pie) |
 | anthropic | Claude AI API client |
 | yfinance | Yahoo Finance price data |
-| openpyxl | Excel file reading |
+| openpyxl | Excel file reading/writing |
 | truststore | System SSL certificate trust (for corporate environments) |
 
 ## Price Handling
@@ -154,8 +186,10 @@ Then copy the contents of `portfolio_b64.txt` into the Streamlit Cloud secrets, 
 | File | In Repo | Contains Sensitive Data |
 |---|---|---|
 | `app.py`, `ai.py`, `portfolio.py`, etc. | Yes | No |
+| `sample_portfolio.xlsx` | Yes | No — fake data only |
 | `data/portfolio.xlsx` | No (gitignored) | Yes — local only |
 | `encode_portfolio.py` | No (gitignored) | Yes — contains name mapping |
+| `update_portfolio.py` | No (gitignored) | Yes — uses real data |
 | `portfolio_b64.txt` | No (gitignored) | Yes — encoded portfolio data |
 | `.streamlit/secrets.toml` | No (gitignored) | Yes — API key + portfolio data |
 | `test_excel.py` | No (gitignored) | Yes — sample data with names |

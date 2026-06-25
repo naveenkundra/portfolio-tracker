@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from portfolio import load_holdings, fetch_prices, build_portfolio, get_portfolio_snapshot
 from ai import generate_insights, suggest_rebalance, summarize_news, risk_assessment, tax_strategy, ai_chat
-from excel_converter import load_excel, split_holdings, to_portfolio_csv, get_summary_by_dimension
+from excel_converter import load_excel, split_holdings, to_portfolio_csv, get_summary_by_dimension, export_updated_excel
 from price_updater import update_portfolio_prices, fetch_exchange_rate
 
 st.set_page_config(page_title="Portfolio Tracker", page_icon="📊", layout="wide")
@@ -79,6 +79,8 @@ def _load_portfolio_from_secrets():
         pass
     return None
 
+DEMO_PORTFOLIO = os.path.join(os.path.dirname(__file__), "sample_portfolio.xlsx")
+
 if "source" not in st.session_state:
     secrets_file = _load_portfolio_from_secrets()
     if secrets_file:
@@ -86,6 +88,8 @@ if "source" not in st.session_state:
         st.session_state["_secrets_file"] = secrets_file
     elif os.path.exists(DEFAULT_PORTFOLIO):
         st.session_state["source"] = "default"
+    elif os.path.exists(DEMO_PORTFOLIO):
+        st.session_state["source"] = "demo"
     else:
         st.title("📊 Portfolio Tracker")
         st.info("Upload a CSV or Excel file, or click **Use Sample Data** in the sidebar to get started.")
@@ -94,10 +98,12 @@ if "source" not in st.session_state:
 try:
     if st.session_state["source"] == "sample":
         holdings_df = load_holdings("sample_holdings.csv")
-    elif st.session_state["source"] in ("default", "secrets"):
+    elif st.session_state["source"] in ("default", "secrets", "demo"):
         is_excel = True
         if st.session_state["source"] == "secrets":
             excel_df = load_excel(st.session_state["_secrets_file"])
+        elif st.session_state["source"] == "demo":
+            excel_df = load_excel(DEMO_PORTFOLIO)
         else:
             excel_df = load_excel(DEFAULT_PORTFOLIO)
     else:
@@ -110,6 +116,13 @@ try:
 except ValueError as e:
     st.error(str(e))
     st.stop()
+
+if st.session_state.get("source") == "demo":
+    st.markdown("""<div style="background-color: #c62828; color: white; padding: 12px 24px;
+        border-radius: 8px; text-align: center; font-weight: 700; font-size: 1.2em;
+        margin-bottom: 16px;">
+        DUMMY DATA — This is sample data for demonstration purposes only
+    </div>""", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -133,6 +146,52 @@ if is_excel:
         st.sidebar.caption(f"Prices as of: {price_timestamp}")
         st.sidebar.caption(f"USD/CAD: {live_fx_rate:.4f}")
         live_prices_active = True
+
+        # --- Download updated portfolio ---
+        with st.sidebar:
+            st.divider()
+            st.markdown("""
+            <style>
+            div[data-testid="stDownloadButton"] > button {
+                background: linear-gradient(135deg, #1565c0, #0d47a1);
+                color: white;
+                font-weight: 700;
+                font-size: 1.05em;
+                border: none;
+                padding: 0.6em 1em;
+            }
+            div[data-testid="stDownloadButton"] > button:hover {
+                background: linear-gradient(135deg, #1976d2, #1565c0);
+                color: white;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # Generate updated Excel in memory
+            excel_buf = io.BytesIO()
+            export_updated_excel(active, cash, sold, excel_buf)
+            excel_bytes = excel_buf.getvalue()
+
+            st.download_button(
+                "📥 DOWNLOAD UPDATED PORTFOLIO",
+                data=excel_bytes,
+                file_name="portfolio_updated.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+            # Generate base64 chunks for Streamlit secrets
+            with st.expander("Update Streamlit Secrets"):
+                b64 = base64.b64encode(excel_bytes).decode("ascii")
+                chunk_size = 30000
+                chunks = [b64[i:i + chunk_size] for i in range(0, len(b64), chunk_size)]
+                secrets_text = "\n".join(
+                    f'PORTFOLIO_DATA_{i} = "{chunk}"'
+                    for i, chunk in enumerate(chunks, 1)
+                )
+                st.caption(f"{len(chunks)} chunk(s), {len(b64):,} chars")
+                st.code(secrets_text, language="toml")
+                st.caption("Copy above into Streamlit Cloud Settings > Secrets")
 
     has_mv = "market_value_cad" in active.columns
     has_bv = "book_value_cad" in active.columns

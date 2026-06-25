@@ -201,6 +201,82 @@ def to_portfolio_csv(df: pd.DataFrame) -> pd.DataFrame:
     return result.reset_index(drop=True)
 
 
+REVERSE_COLUMN_MAP = {v: k for k, v in COLUMN_MAP.items()}
+
+EXCEL_COLUMN_ORDER = [
+    "date_updated", "ticker", "parent_ticker", "holder", "platform",
+    "account_type", "currency", "investment_type", "date_purchased",
+    "date_sold", "cash_balance", "cash_equivalent", "market_value",
+    "total_cash", "total_cash_cad", "book_cost", "book_cost_sold",
+    "cost_per_unit", "units", "sold_units", "sold_market_value",
+    "sold_price", "realized_pnl", "realized_pnl_cad", "exchange_rate",
+    "currency_multiplier", "market_value_curr", "book_value_cad",
+    "market_value_cad", "unrealized_pnl", "unrealized_pnl_cad",
+    "return_pct", "total_value_cad", "stock_equiv_usd",
+]
+
+EXCEL_HEADER_CASE = {
+    "date_updated": "Date_Updated", "tick": "TICK", "par_tick": "Par_TICK",
+    "name": "Name", "platf": "Platf", "acc_type": "Acc_Type", "curr": "Curr",
+    "inv_type": "Inv_Type", "dt. pur": "Dt. Pur", "date sold": "Date Sold",
+    "cash": "Cash", "cash_eqv": "Cash_Eqv", "mkt_val": "Mkt_Val",
+    "t_cash": "T_Cash", "t_cash_bal_in_cad": "T_Cash_Bal_In_CAD",
+    "book_p": "Book_P", "bk_cst_sold": "BK_Cst_Sold",
+    "book_pr_u": "Book_Pr_U", "units": "Units", "sold_units": "Sold_Units",
+    "sold_mv": "Sold_MV", "sold_stock_price": "Sold_Stock_Price",
+    "proft / loss booked (curr)": "Proft / Loss Booked (Curr)",
+    "proft / loss booked (cad)": "Proft / Loss Booked (CAD)",
+    "ex_rt": "Ex_Rt", "usd_ind": "USD_Ind", "mkt_val_curr": "Mkt_Val_Curr",
+    "book_value_cad": "Book_Value_CAD", "mk_val_cad": "MK_Val_CAD",
+    "ret_abs": "Ret_Abs", "ret_cad": "Ret_CAD", "%ge return": "%ge Return",
+    "cash_cad_mk_val_cad": "Cash_CAD_Mk_Val_CAD",
+    "stock_eqv_usd": "Stock_Eqv_USD",
+}
+
+
+def export_updated_excel(active_df: pd.DataFrame, cash_df: pd.DataFrame,
+                         sold_df: pd.DataFrame, output) -> None:
+    """Export updated DataFrames back to Excel with original column names."""
+    from datetime import datetime
+
+    # Restore cash ticker names
+    cash_out = cash_df.copy()
+    if not cash_out.empty:
+        cash_out["ticker"] = "zCash"
+        if "parent_ticker" in cash_out.columns:
+            cash_out["parent_ticker"] = "zCash"
+
+    # Combine all rows
+    frames = [f for f in [active_df, cash_out, sold_df] if not f.empty]
+    if not frames:
+        return
+    combined = pd.concat(frames, ignore_index=True)
+
+    # Update date
+    combined["date_updated"] = datetime.now().strftime("%m-%d-%Y")
+
+    # Drop internal columns that aren't in the Excel format
+    drop_cols = ["lookup_ticker", "platform_name", "_yf_ticker"]
+    combined = combined.drop(columns=[c for c in drop_cols if c in combined.columns],
+                             errors="ignore")
+
+    # Select and order columns
+    avail = [c for c in EXCEL_COLUMN_ORDER if c in combined.columns]
+    combined = combined[avail]
+
+    # Rename back to Excel column names
+    rename = {}
+    for internal_name in combined.columns:
+        excel_name = REVERSE_COLUMN_MAP.get(internal_name)
+        if excel_name and excel_name in EXCEL_HEADER_CASE:
+            rename[internal_name] = EXCEL_HEADER_CASE[excel_name]
+        elif internal_name in EXCEL_HEADER_CASE:
+            rename[internal_name] = EXCEL_HEADER_CASE[internal_name]
+    combined = combined.rename(columns=rename)
+
+    combined.to_excel(output, index=False)
+
+
 def get_summary_by_dimension(df: pd.DataFrame, dimension: str) -> pd.DataFrame:
     """Summarize portfolio by a dimension (holder, platform, account_type, currency)."""
     splits = split_holdings(df)
