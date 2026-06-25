@@ -81,16 +81,21 @@ def _load_portfolio_from_secrets():
 
 DEMO_PORTFOLIO = os.path.join(os.path.dirname(__file__), "sample_portfolio.xlsx")
 
-if "source" not in st.session_state:
-    secrets_file = _load_portfolio_from_secrets()
-    if secrets_file:
-        st.session_state["source"] = "secrets"
-        st.session_state["_secrets_file"] = secrets_file
-    elif os.path.exists(DEFAULT_PORTFOLIO):
-        st.session_state["source"] = "default"
-    elif os.path.exists(DEMO_PORTFOLIO):
+force_demo = st.query_params.get("demo", "").lower() in ("true", "1", "yes")
+
+if "source" not in st.session_state or force_demo:
+    if force_demo and os.path.exists(DEMO_PORTFOLIO):
         st.session_state["source"] = "demo"
-    else:
+    elif not force_demo:
+        secrets_file = _load_portfolio_from_secrets()
+        if secrets_file:
+            st.session_state["source"] = "secrets"
+            st.session_state["_secrets_file"] = secrets_file
+        elif os.path.exists(DEFAULT_PORTFOLIO):
+            st.session_state["source"] = "default"
+        elif os.path.exists(DEMO_PORTFOLIO):
+            st.session_state["source"] = "demo"
+    if "source" not in st.session_state:
         st.title("📊 Portfolio Tracker")
         st.info("Upload a CSV or Excel file, or click **Use Sample Data** in the sidebar to get started.")
         st.stop()

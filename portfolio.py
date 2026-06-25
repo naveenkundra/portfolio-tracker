@@ -10,7 +10,6 @@ try:
 except Exception:
     pass
 
-truststore.inject_into_ssl()
 _session = requests.Session()
 
 
