@@ -302,6 +302,206 @@ if is_excel:
     m6.metric("Cash (CAD)", _money(family["cash_cad"]))
 
     # ══════════════════════════════════════════════════════════
+    # TICKER SEARCH
+    # ══════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown("### 🔍 Ticker Search")
+    _srch_tcol = "parent_ticker" if "parent_ticker" in active.columns else "ticker"
+    _all_tickers = sorted(active[_srch_tcol].dropna().unique())
+
+    _srch_col, _srch_hint = st.columns([3, 1])
+    with _srch_col:
+        _srch_input = st.text_input(
+            "Search ticker",
+            placeholder="Type a ticker, e.g. AAPL, XEI, MSFT",
+            key="ticker_search_input",
+            label_visibility="collapsed",
+        )
+    with _srch_hint:
+        st.caption(f"{len(_all_tickers)} tickers in portfolio")
+
+    if _srch_input:
+        _srch_upper = _srch_input.strip().upper()
+        _matched = [t for t in _all_tickers if _srch_upper in str(t).upper()]
+
+        if not _matched:
+            st.warning(f"No ticker matching **{_srch_input}** found in active holdings.")
+        else:
+            _sel = st.selectbox("Select ticker:", _matched, key="ticker_search_sel") if len(_matched) > 1 else _matched[0]
+            if len(_matched) == 1:
+                st.caption(f"Showing: **{_sel}**")
+
+            _tk = active[active[_srch_tcol] == _sel].copy()
+
+            # Align baseline rows by index so live vs upload comparison is row-safe
+            if live_prices_active:
+                _bl = baseline_active[baseline_active[_srch_tcol] == _sel].copy()
+                _common_idx = _tk.index.intersection(_bl.index)
+                _tk = _tk.loc[_common_idx]
+                _bl = _bl.loc[_common_idx]
+            else:
+                _bl = None
+
+            if _tk.empty:
+                st.info("No active positions for this ticker.")
+            else:
+                _tk_bv   = _tk["book_value_cad"].sum() if "book_value_cad" in _tk.columns else 0
+                _tk_umv  = (_bl["market_value_cad"].sum() if _bl is not None and "market_value_cad" in _bl.columns
+                            else (_tk["market_value_cad"].sum() if "market_value_cad" in _tk.columns else 0))
+                _tk_lmv  = _tk["market_value_cad"].sum() if live_prices_active and "market_value_cad" in _tk.columns else None
+                _tk_effmv = _tk_lmv if _tk_lmv is not None else _tk_umv
+                _tk_pnl  = _tk_effmv - _tk_bv
+                _tk_ret  = _tk_pnl / _tk_bv if _tk_bv else None
+                _tk_units = _tk["units"].sum() if "units" in _tk.columns else 0
+                _n_owners = _tk["holder"].nunique() if "holder" in _tk.columns else "?"
+                _n_accs   = _tk["account_type"].nunique() if "account_type" in _tk.columns else "?"
+
+                st.markdown(f"#### {_sel} — {len(_tk)} position(s) across {_n_owners} owner(s), {_n_accs} account type(s)")
+
+                _sm = st.columns(5 if live_prices_active else 4)
+                _sm[0].metric("Total Units", f"{_tk_units:,.2f}")
+                _sm[1].metric("Book Value (CAD)", _money(_tk_bv))
+                if live_prices_active:
+                    _sm[2].metric("Uploaded MV (CAD)", _money(_tk_umv))
+                    _sm[3].metric("Live MV (CAD)", _money(_tk_lmv))
+                    _sm[4].metric("P&L vs Book", _money(_tk_pnl), delta=_pct(_tk_ret) if _tk_ret else None)
+                else:
+                    _sm[2].metric("Market Value (CAD)", _money(_tk_umv))
+                    _sm[3].metric("P&L vs Book", _money(_tk_pnl), delta=_pct(_tk_ret) if _tk_ret else None)
+
+                # ── Individual positions ──
+                st.markdown("**Individual Positions**")
+                _ind_cols = ["holder", "account_type", "platform", "currency",
+                             "investment_type", "units", "cost_per_unit", "book_value_cad"]
+                _ind_avail = [c for c in _ind_cols if c in _tk.columns]
+                _ind = _tk[_ind_avail].copy()
+
+                if live_prices_active and _bl is not None and "market_value_cad" in _bl.columns and "market_value_cad" in _tk.columns:
+                    _ind["uploaded_mv_cad"]  = _bl["market_value_cad"].values
+                    _ind["live_mv_cad"]      = _tk["market_value_cad"].values
+                    _ind["P&L vs Book"]      = _ind["live_mv_cad"]     - _ind["book_value_cad"]
+                    _ind["P&L vs Upload"]    = _ind["live_mv_cad"]     - _ind["uploaded_mv_cad"]
+                elif "market_value_cad" in _tk.columns:
+                    _ind["market_value_cad"] = _tk["market_value_cad"].values
+                    _ind["P&L vs Book"]      = _ind["market_value_cad"] - _ind["book_value_cad"]
+
+                if "P&L vs Book" in _ind.columns and "book_value_cad" in _ind.columns:
+                    _ind["Return %"] = (_ind["P&L vs Book"] / _ind["book_value_cad"]).where(
+                        _ind["book_value_cad"].notna() & (_ind["book_value_cad"] != 0)
+                    )
+
+                # Totals row
+                _ind_tot = {}
+                for _c in _ind.columns:
+                    if _c == _ind.columns[0]:
+                        _ind_tot[_c] = "TOTAL"
+                    elif _c == "Return %":
+                        _tb = pd.to_numeric(_ind["book_value_cad"], errors="coerce").sum()
+                        _tp = pd.to_numeric(_ind.get("P&L vs Book"), errors="coerce").sum() if "P&L vs Book" in _ind.columns else None
+                        _ind_tot[_c] = _tp / _tb if _tb and _tp is not None else None
+                    elif any(k in _c.lower() for k in ["units", "value", "cad", "p&l", "mv"]):
+                        _ind_tot[_c] = pd.to_numeric(_ind[_c], errors="coerce").sum()
+                    else:
+                        _ind_tot[_c] = ""
+                _ind = pd.concat([_ind, pd.DataFrame([_ind_tot])], ignore_index=True)
+
+                _ind_rename = {
+                    "holder": "Owner", "account_type": "Account", "platform": "Platform",
+                    "currency": "Ccy", "investment_type": "Type", "units": "Units",
+                    "cost_per_unit": "Cost/Unit", "book_value_cad": "Book Value (CAD)",
+                    "market_value_cad": "Market Value (CAD)",
+                    "uploaded_mv_cad": "Uploaded MV (CAD)", "live_mv_cad": "Live MV (CAD)",
+                }
+                _ind = _ind.rename(columns={k: v for k, v in _ind_rename.items() if k in _ind.columns})
+
+                _ind_fmt = {}
+                for _c in _ind.columns:
+                    if any(k in _c for k in ["Value", "MV", "P&L"]):
+                        _ind_fmt[_c] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("" if isinstance(x, str) else "—")
+                    elif _c == "Return %":
+                        _ind_fmt[_c] = lambda x: f"{x:.1%}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                    elif _c == "Cost/Unit":
+                        _ind_fmt[_c] = lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                    elif _c == "Units":
+                        _ind_fmt[_c] = lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+
+                _pnl_ind_cols = [c for c in _ind.columns if "P&L" in c or "Return" in c]
+
+                def _style_srch_tot(row):
+                    if row.iloc[0] == "TOTAL":
+                        return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                    return [""] * len(row)
+
+                _sty_ind = _ind.style.format(_ind_fmt).apply(_style_srch_tot, axis=1)
+                if _pnl_ind_cols:
+                    _sty_ind = _sty_ind.map(_style_pnl, subset=_pnl_ind_cols)
+                st.dataframe(_sty_ind, use_container_width=True, hide_index=True)
+
+                # ── Rolled-up by Account Type ──
+                if "account_type" in _tk.columns:
+                    st.markdown("**Rolled Up by Account Type**")
+                    _roll_rows = []
+                    for _at in [a for a in acc_type_order if a in _tk["account_type"].dropna().unique()]:
+                        _at_tk = _tk[_tk["account_type"] == _at]
+                        _at_bl = _bl[_bl["account_type"] == _at] if _bl is not None and "account_type" in _bl.columns else None
+                        _at_holders = sorted(_at_tk["holder"].dropna().unique()) if "holder" in _at_tk.columns else ["—"]
+                        for _hn in _at_holders:
+                            _h_tk = _at_tk[_at_tk["holder"] == _hn] if "holder" in _at_tk.columns else _at_tk
+                            _h_bl = _at_bl[_at_bl["holder"] == _hn] if _at_bl is not None and "holder" in _at_bl.columns else None
+                            _r = {
+                                "Account": _at,
+                                "Owner": _display_holder(_hn),
+                                "Units": _h_tk["units"].sum() if "units" in _h_tk.columns else 0,
+                                "Book Value (CAD)": _h_tk["book_value_cad"].sum() if "book_value_cad" in _h_tk.columns else 0,
+                            }
+                            if live_prices_active and _h_bl is not None and "market_value_cad" in _h_bl.columns:
+                                _r["Uploaded MV (CAD)"] = _h_bl["market_value_cad"].sum()
+                                _r["Live MV (CAD)"]     = _h_tk["market_value_cad"].sum() if "market_value_cad" in _h_tk.columns else 0
+                                _r["P&L vs Book"]       = _r["Live MV (CAD)"] - _r["Book Value (CAD)"]
+                                _r["P&L vs Upload"]     = _r["Live MV (CAD)"] - _r["Uploaded MV (CAD)"]
+                            elif "market_value_cad" in _h_tk.columns:
+                                _r["Market Value (CAD)"] = _h_tk["market_value_cad"].sum()
+                                _r["P&L vs Book"]        = _r["Market Value (CAD)"] - _r["Book Value (CAD)"]
+                            _bv_r = _r["Book Value (CAD)"]
+                            _r["Return %"] = _r["P&L vs Book"] / _bv_r if _bv_r else None
+                            _roll_rows.append(_r)
+
+                    if _roll_rows:
+                        _roll = pd.DataFrame(_roll_rows)
+                        _roll_tot = {"Account": "TOTAL", "Owner": ""}
+                        for _c in _roll.columns:
+                            if _c in ("Account", "Owner"):
+                                continue
+                            elif _c == "Return %":
+                                _tb = pd.to_numeric(_roll["Book Value (CAD)"], errors="coerce").sum()
+                                _tp = pd.to_numeric(_roll["P&L vs Book"], errors="coerce").sum()
+                                _roll_tot[_c] = _tp / _tb if _tb else None
+                            else:
+                                _roll_tot[_c] = pd.to_numeric(_roll[_c], errors="coerce").sum()
+                        _roll = pd.concat([_roll, pd.DataFrame([_roll_tot])], ignore_index=True)
+
+                        _roll_fmt = {}
+                        for _c in _roll.columns:
+                            if any(k in _c for k in ["Value", "MV", "P&L"]):
+                                _roll_fmt[_c] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("" if isinstance(x, str) else "—")
+                            elif _c == "Return %":
+                                _roll_fmt[_c] = lambda x: f"{x:.1%}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                            elif _c == "Units":
+                                _roll_fmt[_c] = lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+
+                        _pnl_roll_cols = [c for c in _roll.columns if "P&L" in c or "Return" in c]
+
+                        def _style_roll_tot(row):
+                            if row.iloc[0] == "TOTAL":
+                                return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+                            return [""] * len(row)
+
+                        _sty_roll = _roll.style.format(_roll_fmt).apply(_style_roll_tot, axis=1)
+                        if _pnl_roll_cols:
+                            _sty_roll = _sty_roll.map(_style_pnl, subset=_pnl_roll_cols)
+                        st.dataframe(_sty_roll, use_container_width=True, hide_index=True)
+
+    # ══════════════════════════════════════════════════════════
     # LIVE MARKET DASHBOARD — appears when Refresh is clicked
     # ══════════════════════════════════════════════════════════
     if live_prices_active:
