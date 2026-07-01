@@ -220,9 +220,21 @@ if is_excel:
     .owner-pnl { display: inline-block; padding: 4px 12px; border-radius: 6px; font-weight: 700; font-size: 1.05em; margin-left: 8px; }
     .owner-pnl-gain { background-color: #e8f5e9; color: #2e7d32; }
     .owner-pnl-loss { background-color: #ffebee; color: #c62828; }
+    /* Disable pinch-to-zoom on charts — use toolbar buttons instead */
+    .js-plotly-plot .drag { touch-action: pan-y !important; }
     </style>
     """
     st.markdown(PNL_CSS, unsafe_allow_html=True)
+
+    # Chart defaults — larger fonts + no scroll/touch zoom
+    _CHART_FONT = dict(size=16)
+    _CHART_CFG  = {"scrollZoom": False, "displayModeBar": True,
+                   "modeBarButtonsToRemove": ["select2d", "lasso2d"]}
+
+    def _chart(fig, **kw):
+        fig.update_layout(font=_CHART_FONT, hoverlabel=dict(font_size=14))
+        fig.update_traces(textfont_size=14)
+        st.plotly_chart(fig, config=_CHART_CFG, **kw)
 
     def _pnl_html(val, show_sign=True):
         if pd.isna(val) or val == 0:
@@ -623,7 +635,7 @@ if is_excel:
                     hovertemplate="%{label}<br>Change: $%{customdata[1]:,d}<br>Move: %{customdata[2]}<br>Excel: $%{customdata[3]:,d}<br>Live: $%{customdata[4]:,d}<extra></extra>",
                 )
                 fig_tree.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=500, coloraxis_showscale=False)
-                st.plotly_chart(fig_tree, use_container_width=True)
+                _chart(fig_tree, use_container_width=True)
             else:
                 st.info("No price changes detected.")
 
@@ -642,7 +654,7 @@ if is_excel:
                     )
                     fig_g.update_traces(hovertemplate="%{x}<br>+$%{y:,.0f}<extra></extra>", textposition="outside")
                     fig_g.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=400, showlegend=False, coloraxis_showscale=False, yaxis_tickformat="$,.0f", yaxis_title="")
-                    st.plotly_chart(fig_g, use_container_width=True)
+                    _chart(fig_g, use_container_width=True)
 
                     g_table = gainers[[ticker_col, "excel_mv", "live_mv", "change", "move_pct", "total_return", "total_return_pct"]].copy()
                     g_table.columns = ["Ticker", "Upload MV", "Live MV", "Change ($)", "Move %", "Total P&L", "Total Return %"]
@@ -666,7 +678,7 @@ if is_excel:
                     )
                     fig_l.update_traces(hovertemplate="%{x}<br>$%{y:,.0f}<extra></extra>", textposition="outside")
                     fig_l.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=400, showlegend=False, coloraxis_showscale=False, yaxis_tickformat="$,.0f", yaxis_title="")
-                    st.plotly_chart(fig_l, use_container_width=True)
+                    _chart(fig_l, use_container_width=True)
 
                     l_table = losers[[ticker_col, "excel_mv", "live_mv", "change", "move_pct", "total_return", "total_return_pct"]].copy()
                     l_table.columns = ["Ticker", "Upload MV", "Live MV", "Change ($)", "Move %", "Total P&L", "Total Return %"]
@@ -703,7 +715,7 @@ if is_excel:
                     yaxis_tickformat="$,.0f", yaxis_title="P&L (CAD)",
                     showlegend=False,
                 )
-                st.plotly_chart(fig_wf, use_container_width=True)
+                _chart(fig_wf, use_container_width=True)
 
         # ── TAB 4: BY OWNER — Male vs Female breakdown ──
         with ltab4:
@@ -737,7 +749,7 @@ if is_excel:
                     )
                     fig_owner.update_traces(textposition="outside", hovertemplate="%{x}: $%{y:+,.0f}<extra></extra>")
                     fig_owner.update_layout(margin=dict(t=20, b=10, l=10, r=10), height=350, showlegend=False, yaxis_tickformat="$,.0f", yaxis_title="P&L (CAD)")
-                    st.plotly_chart(fig_owner, use_container_width=True)
+                    _chart(fig_owner, use_container_width=True)
 
                 # By account type for this owner
                 h_by_acc = h_delta.groupby("account_type").agg(
@@ -825,7 +837,7 @@ if is_excel:
                     )
                     fig_at.update_traces(textposition="outside", hovertemplate="%{x}: $%{y:+,.0f}<extra></extra>")
                     fig_at.update_layout(margin=dict(t=20, b=10, l=10, r=10), height=300, showlegend=False, yaxis_tickformat="$,.0f", yaxis_title="")
-                    st.plotly_chart(fig_at, use_container_width=True)
+                    _chart(fig_at, use_container_width=True)
                 st.divider()
 
         # ── TAB 6: FULL DETAIL TABLE ──
@@ -917,7 +929,7 @@ if is_excel:
                                     title="By Owner")
                 fig_family.update_traces(texttemplate="$%{value:,.0f}", hovertemplate="%{label}: $%{value:,.0f}<extra></extra>")
                 fig_family.update_layout(margin=dict(t=40, b=20, l=20, r=20), height=300)
-                st.plotly_chart(fig_family, use_container_width=True)
+                _chart(fig_family, use_container_width=True)
 
         with chart2:
             if ordered_family_acc:
@@ -929,7 +941,7 @@ if is_excel:
                                         title="By Account Type")
                 fig_acc_family.update_traces(texttemplate="$%{value:,.0f}", hovertemplate="%{label}: $%{value:,.0f}<extra></extra>")
                 fig_acc_family.update_layout(margin=dict(t=40, b=20, l=20, r=20), height=300)
-                st.plotly_chart(fig_acc_family, use_container_width=True)
+                _chart(fig_acc_family, use_container_width=True)
 
         # ── Family P&L by Holding (aggregated by parent_ticker) ──
         ticker_col = "parent_ticker" if "parent_ticker" in active.columns else "ticker"
@@ -953,7 +965,147 @@ if is_excel:
                 xaxis_title="",
                 yaxis_tickformat="$,.0f",
             )
-            st.plotly_chart(fig_family_pnl, use_container_width=True)
+            _chart(fig_family_pnl, use_container_width=True)
+
+        # ── FAMILY POSITIONS BY MARKET VALUE ──
+        _fam_pos_tc = "parent_ticker" if "parent_ticker" in active.columns else "ticker"
+        _fam_pos_df = active.groupby(_fam_pos_tc).agg(
+            mv=("market_value_cad", "sum"),
+        ).reset_index().sort_values("mv", ascending=False)
+        if not _fam_pos_df.empty:
+            fig_fam_pos = px.bar(
+                _fam_pos_df, x=_fam_pos_tc, y="mv",
+                text=_fam_pos_df["mv"].apply(lambda x: f"${x:,.0f}"),
+                color="mv", color_continuous_scale=["#bbdefb", "#1565c0"],
+                title="Family — Positions by Market Value (CAD)",
+            )
+            fig_fam_pos.update_traces(textposition="outside")
+            fig_fam_pos.update_layout(
+                margin=dict(t=50, b=20, l=20, r=20), height=480,
+                showlegend=False, coloraxis_showscale=False,
+                yaxis_tickformat="$,.0f", yaxis_title="Market Value (CAD)", xaxis_title="",
+            )
+            _chart(fig_fam_pos, use_container_width=True)
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════
+    # COMBINED VIEW — all holders together
+    # ══════════════════════════════════════════════════════════
+    comb_sum = _summarize(active, cash)
+    _comb_pnl_cls = "owner-pnl-gain" if comb_sum["pnl"] >= 0 else "owner-pnl-loss"
+    _comb_sign = "+" if comb_sum["pnl"] > 0 else ""
+    st.markdown(
+        f'### 👨‍👩‍👧‍👦 Combined '
+        f'<span class="{_comb_pnl_cls}">{_comb_sign}${comb_sum["pnl"]:,.0f} ({_comb_sign}{comb_sum["pnl_pct"]:.1%})</span>',
+        unsafe_allow_html=True,
+    )
+    _cv1, _cv2, _cv3, _cv4, _cv5 = st.columns(5)
+    _cv1.metric("Total Value",   _money(comb_sum["total"]))
+    _cv2.metric("Market Value",  _money(comb_sum["market_value_cad"]))
+    _cv3.metric("Book Value",    _money(comb_sum["book_value_cad"]))
+    _cv4.metric("P&L", _money(comb_sum["pnl"]),
+                delta=_pct(comb_sum["pnl_pct"]) if comb_sum["pnl_pct"] else None)
+    _cv5.metric("Cash",          _money(comb_sum["cash_cad"]))
+
+    # Stacked positions chart — shows each holder's slice per ticker
+    if has_mv and "holder" in active.columns:
+        _cpos_tc = "parent_ticker" if "parent_ticker" in active.columns else "ticker"
+        _cpos_df = active.groupby([_cpos_tc, "holder"]).agg(mv=("market_value_cad", "sum")).reset_index()
+        _ticker_order = (active.groupby(_cpos_tc)["market_value_cad"].sum()
+                         .sort_values(ascending=False).index.tolist())
+        _cpos_df[_cpos_tc] = pd.Categorical(_cpos_df[_cpos_tc], categories=_ticker_order, ordered=True)
+        _cpos_df = _cpos_df.sort_values(_cpos_tc)
+        fig_comb_pos = px.bar(
+            _cpos_df, x=_cpos_tc, y="mv", color="holder", barmode="stack",
+            text=_cpos_df["mv"].apply(lambda x: f"${x:,.0f}"),
+            title="Combined — Positions by Market Value (CAD)",
+        )
+        fig_comb_pos.update_traces(textposition="inside", insidetextanchor="middle")
+        fig_comb_pos.update_layout(
+            margin=dict(t=50, b=20, l=20, r=20), height=500,
+            yaxis_tickformat="$,.0f", yaxis_title="Market Value (CAD)", xaxis_title="",
+            legend_title="Owner",
+        )
+        _chart(fig_comb_pos, use_container_width=True)
+
+    # Helper: build a holdings detail dataframe with P&L + totals row + styled output
+    def _render_holdings_table(src_df, include_holder=True):
+        _base = ["parent_ticker", "holder", "account_type", "platform", "currency",
+                 "investment_type", "units", "cost_per_unit", "book_value_cad", "market_value_cad"]
+        if not include_holder:
+            _base = [c for c in _base if c != "account_type"]
+        _avail = [c for c in _base if c in src_df.columns]
+        _d = src_df[_avail].copy()
+        if has_mv and has_bv:
+            _d["P&L (CAD)"] = _d["market_value_cad"] - _d["book_value_cad"]
+            _d["Return %"]  = (_d["P&L (CAD)"] / _d["book_value_cad"]).where(_d["book_value_cad"] != 0)
+        _d.columns = [c.replace("_", " ").title() if "P&L" not in c and "Return" not in c else c for c in _d.columns]
+        _dfmt = {}
+        for _c in _d.columns:
+            if any(k in _c.lower() for k in ["value", "book", "p&l"]):
+                _dfmt[_c] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+            elif "return" in _c.lower():
+                _dfmt[_c] = lambda x: f"{x:.1%}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+            elif "units" in _c.lower():
+                _dfmt[_c] = lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+            elif "per unit" in _c.lower():
+                _dfmt[_c] = lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else ("—" if not isinstance(x, str) else x)
+        if not _d.empty:
+            _tots = {}
+            for _c in _d.columns:
+                if _c == _d.columns[0]:
+                    _tots[_c] = "TOTAL"
+                elif any(k in _c.lower() for k in ["value", "book", "p&l", "cost"]):
+                    _tots[_c] = pd.to_numeric(_d[_c], errors="coerce").sum()
+                elif "return" in _c.lower():
+                    _bvc = "Book Value Cad" if "Book Value Cad" in _d.columns else None
+                    _pc  = "P&L (CAD)"      if "P&L (CAD)"      in _d.columns else None
+                    if _bvc and _pc:
+                        _tb = pd.to_numeric(_d[_bvc], errors="coerce").sum()
+                        _tp = pd.to_numeric(_d[_pc],  errors="coerce").sum()
+                        _tots[_c] = _tp / _tb if _tb else None
+                    else:
+                        _tots[_c] = None
+                else:
+                    _tots[_c] = ""
+            _d = pd.concat([_d, pd.DataFrame([_tots])], ignore_index=True)
+        _pnl_c = [c for c in _d.columns if "p&l" in c.lower() or "return" in c.lower()]
+        def _st_tr(row):
+            if row.iloc[0] == "TOTAL":
+                return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
+            return [""] * len(row)
+        _sty = _d.style.format(_dfmt).apply(_st_tr, axis=1)
+        if _pnl_c:
+            _sty = _sty.map(_style_pnl, subset=_pnl_c)
+        st.dataframe(_sty, use_container_width=True, hide_index=True)
+
+    # Tabs: Total + per account type
+    _comb_acc_types = [a for a in acc_type_order if a in active["account_type"].dropna().unique()]
+    _comb_tab_labels = ["📊 Total"] + [f"📁 {a}" for a in _comb_acc_types]
+    _comb_tabs = st.tabs(_comb_tab_labels)
+
+    with _comb_tabs[0]:
+        _ta1, _ta2, _ta3, _ta4 = st.columns(4)
+        _ta1.metric("Market Value", _money(comb_sum["market_value_cad"]))
+        _ta2.metric("Book Value",   _money(comb_sum["book_value_cad"]))
+        _ta3.metric("P&L", _money(comb_sum["pnl"]),
+                    delta=_pct(comb_sum["pnl_pct"]) if comb_sum["pnl_pct"] else None)
+        _ta4.metric("Cash",         _money(comb_sum["cash_cad"]))
+        _render_holdings_table(active, include_holder=True)
+
+    for _ctab, _cat in zip(_comb_tabs[1:], _comb_acc_types):
+        with _ctab:
+            _cat_h = active[active["account_type"] == _cat]
+            _cat_c = cash[cash["account_type"] == _cat] if not cash.empty and "account_type" in cash.columns else pd.DataFrame()
+            _cs = _summarize(_cat_h, _cat_c)
+            _ta1, _ta2, _ta3, _ta4 = st.columns(4)
+            _ta1.metric("Market Value", _money(_cs["market_value_cad"]))
+            _ta2.metric("Book Value",   _money(_cs["book_value_cad"]))
+            _ta3.metric("P&L", _money(_cs["pnl"]),
+                        delta=_pct(_cs["pnl_pct"]) if _cs["pnl_pct"] else None)
+            _ta4.metric("Cash",         _money(_cs["cash_cad"]))
+            _render_holdings_table(_cat_h, include_holder=True)
 
     st.divider()
 
@@ -987,7 +1139,7 @@ if is_excel:
                                     title=f"{_display_holder(holder)} — by Account Type")
                     fig_acc.update_traces(texttemplate="$%{value:,.0f}", hovertemplate="%{label}: $%{value:,.0f}<extra></extra>")
                     fig_acc.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=280)
-                    st.plotly_chart(fig_acc, use_container_width=True)
+                    _chart(fig_acc, use_container_width=True)
 
             with owner_chart2:
                 ticker_col = "parent_ticker" if "parent_ticker" in holder_active.columns else "ticker"
@@ -1006,7 +1158,26 @@ if is_excel:
                     )
                     fig_pnl.update_traces(hovertemplate="%{x}: $%{y:,.0f}<extra></extra>", texttemplate="$%{y:,.0f}", textposition="outside")
                     fig_pnl.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=280, showlegend=False, yaxis_title="P&L (CAD)", yaxis_tickformat="$,.0f")
-                    st.plotly_chart(fig_pnl, use_container_width=True)
+                    _chart(fig_pnl, use_container_width=True)
+
+                # ── POSITIONS BY MARKET VALUE (per owner) ──
+                _own_pos_df = holder_active.groupby(ticker_col).agg(
+                    mv=("market_value_cad", "sum"),
+                ).reset_index().sort_values("mv", ascending=False)
+                if not _own_pos_df.empty and has_mv:
+                    fig_own_pos = px.bar(
+                        _own_pos_df, x=ticker_col, y="mv",
+                        text=_own_pos_df["mv"].apply(lambda x: f"${x:,.0f}"),
+                        color="mv", color_continuous_scale=["#bbdefb", "#1565c0"],
+                        title=f"{_display_holder(holder)} — Positions by Market Value (CAD)",
+                    )
+                    fig_own_pos.update_traces(textposition="outside")
+                    fig_own_pos.update_layout(
+                        margin=dict(t=50, b=20, l=20, r=20), height=420,
+                        showlegend=False, coloraxis_showscale=False,
+                        yaxis_tickformat="$,.0f", yaxis_title="Market Value (CAD)", xaxis_title="",
+                    )
+                    _chart(fig_own_pos, use_container_width=True)
 
         # ── DRILL-DOWN BY ACCOUNT TYPE ──
         owner_acc_types = sorted(holder_active["account_type"].dropna().unique()) if "account_type" in holder_active.columns else []
