@@ -252,6 +252,54 @@ if is_excel:
                 _st = _st.map(_style_pnl, subset=_pc)
             st.dataframe(_st, hide_index=True, **kw)
 
+    def _ticker_rollup_table(src_df):
+        """Render a By Ticker summary table (units, book value, MV, P&L, Return %) for src_df."""
+        if src_df.empty:
+            return
+        _tr = src_df.copy()
+        if "parent_ticker" in _tr.columns and "ticker" in _tr.columns:
+            _tr["_tick"] = _tr["parent_ticker"].where(
+                _tr["parent_ticker"].notna() & (_tr["parent_ticker"].astype(str).str.strip().str.lower() != "nan"),
+                _tr["ticker"]
+            )
+        elif "ticker" in _tr.columns:
+            _tr["_tick"] = _tr["ticker"]
+        elif "parent_ticker" in _tr.columns:
+            _tr["_tick"] = _tr["parent_ticker"]
+        else:
+            return
+        _sum_cols = [c for c in ["units", "book_value_cad", "market_value_cad"] if c in _tr.columns]
+        if not _sum_cols:
+            return
+        _grp = _tr.groupby("_tick", sort=False)[_sum_cols].sum().reset_index()
+        _grp.rename(columns={"_tick": "Ticker", "units": "Units",
+                              "book_value_cad": "Book Value", "market_value_cad": "Market Value"}, inplace=True)
+        if "Book Value" in _grp.columns and "Market Value" in _grp.columns:
+            _grp["P&L (CAD)"] = _grp["Market Value"] - _grp["Book Value"]
+            _grp["Return %"] = (_grp["P&L (CAD)"] / _grp["Book Value"]).where(_grp["Book Value"] != 0)
+        if "Market Value" in _grp.columns:
+            _grp = _grp.sort_values("Market Value", ascending=False).reset_index(drop=True)
+        _tot = {"Ticker": "TOTAL"}
+        for _c in _grp.columns[1:]:
+            if _c == "Return %":
+                _t_bv = pd.to_numeric(_grp.get("Book Value"), errors="coerce").sum()
+                _t_pnl = pd.to_numeric(_grp.get("P&L (CAD)"), errors="coerce").sum()
+                _tot[_c] = _t_pnl / _t_bv if _t_bv else None
+            else:
+                _tot[_c] = pd.to_numeric(_grp[_c], errors="coerce").sum()
+        _grp = pd.concat([_grp, pd.DataFrame([_tot])], ignore_index=True)
+        _tfmt = {}
+        for _c in _grp.columns:
+            if any(k in _c.lower() for k in ["value", "p&l"]):
+                _tfmt[_c] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+            elif "units" in _c.lower():
+                _tfmt[_c] = lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+            elif "return" in _c.lower():
+                _tfmt[_c] = lambda x: f"{x:.1%}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+        _pnl_t = [c for c in _grp.columns if "p&l" in c.lower() or "return" in c.lower()]
+        st.markdown("**By Ticker**")
+        _show_df(_grp, _tfmt, _pnl_t, use_container_width=True)
+
     def _pnl_html(val, show_sign=True):
         if pd.isna(val) or val == 0:
             return '<span class="pnl-neutral">—</span>'
@@ -1063,6 +1111,7 @@ if is_excel:
                     delta=_pct(comb_sum["pnl_pct"]) if comb_sum["pnl_pct"] else None)
         _ta4.metric("Cash",         _money(comb_sum["cash_cad"]))
         _render_holdings_table(active, include_holder=True)
+        _ticker_rollup_table(active)
 
     for _ctab, _cat in zip(_comb_tabs[1:], _comb_acc_types):
         with _ctab:
@@ -1076,6 +1125,7 @@ if is_excel:
                         delta=_pct(_cs["pnl_pct"]) if _cs["pnl_pct"] else None)
             _ta4.metric("Cash",         _money(_cs["cash_cad"]))
             _render_holdings_table(_cat_h, include_holder=True)
+            _ticker_rollup_table(_cat_h)
 
     st.divider()
 
@@ -1210,6 +1260,7 @@ if is_excel:
 
                     pnl_style_cols = [c for c in detail.columns if "p&l" in c.lower() or "return" in c.lower()]
                     _show_df(detail, detail_fmt, pnl_style_cols, use_container_width=True)
+                _ticker_rollup_table(holder_active)
 
             # ── Per account type tabs ──
             for tab, acc_type in zip(all_tabs[1:], ordered_acc):
@@ -1272,6 +1323,7 @@ if is_excel:
 
                         pnl_style_cols = [c for c in detail.columns if "p&l" in c.lower() or "return" in c.lower()]
                         _show_df(detail, detail_fmt, pnl_style_cols, use_container_width=True)
+                    _ticker_rollup_table(acc_holdings)
 
         st.divider()
 
