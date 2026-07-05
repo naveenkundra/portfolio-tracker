@@ -236,6 +236,22 @@ if is_excel:
         fig.update_traces(textfont_size=14)
         st.plotly_chart(fig, config=_CHART_CFG, **kw)
 
+    def _show_df(df, fmt, pnl_cols, **kw):
+        """Render sortable data rows + fixed TOTAL row that never participates in sort."""
+        _is_t = df.iloc[:, 0].astype(str).str.strip() == "TOTAL"
+        _d, _t = df[~_is_t].reset_index(drop=True), df[_is_t].reset_index(drop=True)
+        _pc = [c for c in (pnl_cols or []) if c in df.columns]
+        _sd = _d.style.format(fmt)
+        if _pc:
+            _sd = _sd.map(_style_pnl, subset=_pc)
+        st.dataframe(_sd, hide_index=True, **kw)
+        if not _t.empty:
+            _st = _t.style.format(fmt).apply(
+                lambda r: ["font-weight:bold; background-color:#f0f0f0; border-top:2px solid #555"] * len(r), axis=1)
+            if _pc:
+                _st = _st.map(_style_pnl, subset=_pc)
+            st.dataframe(_st, hide_index=True, **kw)
+
     def _pnl_html(val, show_sign=True):
         if pd.isna(val) or val == 0:
             return '<span class="pnl-neutral">—</span>'
@@ -438,16 +454,7 @@ if is_excel:
                         _ind_fmt[_c] = lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
 
                 _pnl_ind_cols = [c for c in _ind.columns if "P&L" in c or "Return" in c]
-
-                def _style_srch_tot(row):
-                    if row.iloc[0] == "TOTAL":
-                        return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                    return [""] * len(row)
-
-                _sty_ind = _ind.style.format(_ind_fmt).apply(_style_srch_tot, axis=1)
-                if _pnl_ind_cols:
-                    _sty_ind = _sty_ind.map(_style_pnl, subset=_pnl_ind_cols)
-                st.dataframe(_sty_ind, use_container_width=True, hide_index=True)
+                _show_df(_ind, _ind_fmt, _pnl_ind_cols, use_container_width=True)
 
                 # ── Rolled-up by Account Type ──
                 if "account_type" in _tk.columns:
@@ -502,16 +509,7 @@ if is_excel:
                                 _roll_fmt[_c] = lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
 
                         _pnl_roll_cols = [c for c in _roll.columns if "P&L" in c or "Return" in c]
-
-                        def _style_roll_tot(row):
-                            if row.iloc[0] == "TOTAL":
-                                return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                            return [""] * len(row)
-
-                        _sty_roll = _roll.style.format(_roll_fmt).apply(_style_roll_tot, axis=1)
-                        if _pnl_roll_cols:
-                            _sty_roll = _sty_roll.map(_style_pnl, subset=_pnl_roll_cols)
-                        st.dataframe(_sty_roll, use_container_width=True, hide_index=True)
+                        _show_df(_roll, _roll_fmt, _pnl_roll_cols, use_container_width=True)
 
     # ══════════════════════════════════════════════════════════
     # LIVE MARKET DASHBOARD — appears when Refresh is clicked
@@ -766,18 +764,12 @@ if is_excel:
                 h_by_acc = pd.concat([h_by_acc, h_acc_total], ignore_index=True)
                 h_by_acc.columns = ["Account Type", "Upload MV", "Live MV", "P&L (CAD)", "Holdings", "Move %"]
 
-                def _style_row_total(row):
-                    if row["Account Type"] == "TOTAL":
-                        return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                    return [""] * len(row)
-
-                st.dataframe(h_by_acc.style.format({
+                _show_df(h_by_acc, {
                     "Upload MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
                     "Live MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
                     "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
                     "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "-",
-                }).apply(_style_row_total, axis=1).map(_style_pnl, subset=["P&L (CAD)", "Move %"]),
-                    use_container_width=True, hide_index=True)
+                }, ["P&L (CAD)", "Move %"], use_container_width=True)
                 st.divider()
 
         # ── TAB 5: BY ACCOUNT TYPE ──
@@ -808,18 +800,12 @@ if is_excel:
                 at_by_owner = pd.concat([at_by_owner, at_own_total], ignore_index=True)
                 at_by_owner.columns = ["Owner", "Upload MV", "Live MV", "P&L (CAD)", "Holdings", "Move %"]
 
-                def _style_at_total(row):
-                    if row["Owner"] == "TOTAL":
-                        return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                    return [""] * len(row)
-
-                st.dataframe(at_by_owner.style.format({
+                _show_df(at_by_owner, {
                     "Upload MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
                     "Live MV": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
                     "P&L (CAD)": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x,
                     "Move %": lambda x: f"{x:.2%}" if isinstance(x, (int, float)) and pd.notna(x) else "-",
-                }).apply(_style_at_total, axis=1).map(_style_pnl, subset=["P&L (CAD)", "Move %"]),
-                    use_container_width=True, hide_index=True)
+                }, ["P&L (CAD)", "Move %"], use_container_width=True)
 
                 # Holdings within this account type
                 at_by_ticker = at_delta.groupby(ticker_col).agg(
@@ -869,16 +855,7 @@ if is_excel:
                     dfmt[col] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "-"
 
             pnl_cols = [c for c in detail.columns if any(k in c.lower() for k in ["change", "move", "p&l"])]
-
-            def _style_detail_total(row):
-                if row.iloc[0] == "TOTAL":
-                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                return [""] * len(row)
-
-            styled = detail.style.format(dfmt).apply(_style_detail_total, axis=1)
-            if pnl_cols:
-                styled = styled.map(_style_pnl, subset=pnl_cols)
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+            _show_df(detail, dfmt, pnl_cols, use_container_width=True)
 
         st.divider()
 
@@ -1071,14 +1048,7 @@ if is_excel:
                     _tots[_c] = ""
             _d = pd.concat([_d, pd.DataFrame([_tots])], ignore_index=True)
         _pnl_c = [c for c in _d.columns if "p&l" in c.lower() or "return" in c.lower()]
-        def _st_tr(row):
-            if row.iloc[0] == "TOTAL":
-                return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-            return [""] * len(row)
-        _sty = _d.style.format(_dfmt).apply(_st_tr, axis=1)
-        if _pnl_c:
-            _sty = _sty.map(_style_pnl, subset=_pnl_c)
-        st.dataframe(_sty, use_container_width=True, hide_index=True)
+        _show_df(_d, _dfmt, _pnl_c, use_container_width=True)
 
     # Tabs: Total + per account type
     _comb_acc_types = [a for a in acc_type_order if a in active["account_type"].dropna().unique()]
@@ -1239,16 +1209,7 @@ if is_excel:
                     detail = pd.concat([detail, pd.DataFrame([totals])], ignore_index=True)
 
                     pnl_style_cols = [c for c in detail.columns if "p&l" in c.lower() or "return" in c.lower()]
-
-                    def _style_total_row(row):
-                        if row.iloc[0] == "TOTAL":
-                            return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                        return [""] * len(row)
-
-                    styled = detail.style.format(detail_fmt).apply(_style_total_row, axis=1)
-                    if pnl_style_cols:
-                        styled = styled.map(_style_pnl, subset=pnl_style_cols)
-                    st.dataframe(styled, use_container_width=True, hide_index=True)
+                    _show_df(detail, detail_fmt, pnl_style_cols, use_container_width=True)
 
             # ── Per account type tabs ──
             for tab, acc_type in zip(all_tabs[1:], ordered_acc):
@@ -1310,20 +1271,7 @@ if is_excel:
                         detail = pd.concat([detail, totals_row], ignore_index=True)
 
                         pnl_style_cols = [c for c in detail.columns if "p&l" in c.lower() or "return" in c.lower()]
-
-                        def _style_total_row(row):
-                            if row.iloc[0] == "TOTAL":
-                                return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                            return [""] * len(row)
-
-                        styled = detail.style.format(detail_fmt).apply(_style_total_row, axis=1)
-                        if pnl_style_cols:
-                            styled = styled.map(_style_pnl, subset=pnl_style_cols)
-                        st.dataframe(
-                            styled,
-                            use_container_width=True,
-                            hide_index=True,
-                        )
+                        _show_df(detail, detail_fmt, pnl_style_cols, use_container_width=True)
 
         st.divider()
 
@@ -1378,15 +1326,7 @@ if is_excel:
                 "Total Value": lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—",
             }
 
-            def _style_restate(row):
-                if row["Owner"] == "TOTAL":
-                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                return [""] * len(row)
-
-            styled_summary = summary_df.style.format(sfmt).apply(_style_restate, axis=1).map(
-                _style_pnl, subset=["P&L (CAD)", "Return %"]
-            )
-            st.dataframe(styled_summary, use_container_width=True, hide_index=True)
+            _show_df(summary_df, sfmt, ["P&L (CAD)", "Return %"], use_container_width=True)
 
             # Detail holdings per owner within this account type
             for holder in holders:
@@ -1439,15 +1379,7 @@ if is_excel:
                     detail = pd.concat([detail, pd.DataFrame([totals])], ignore_index=True)
                     pnl_cols = [c for c in detail.columns if "p&l" in c.lower() or "return" in c.lower()]
 
-                    def _style_total_row_r(row):
-                        if row.iloc[0] == "TOTAL":
-                            return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                        return [""] * len(row)
-
-                    styled_d = detail.style.format(dfmt).apply(_style_total_row_r, axis=1)
-                    if pnl_cols:
-                        styled_d = styled_d.map(_style_pnl, subset=pnl_cols)
-                    st.dataframe(styled_d, use_container_width=True, hide_index=True)
+                    _show_df(detail, dfmt, pnl_cols, use_container_width=True)
 
     # Grand Total tab
     with restate_tabs[-1]:
@@ -1497,15 +1429,7 @@ if is_excel:
 
         pnl_grand_cols = [c for c in grand_df.columns if "p&l" in c.lower()]
 
-        def _style_grand_total(row):
-            if row["Account Type"] == "TOTAL":
-                return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-            return [""] * len(row)
-
-        styled_grand = grand_df.style.format(gfmt).apply(_style_grand_total, axis=1)
-        if pnl_grand_cols:
-            styled_grand = styled_grand.map(_style_pnl, subset=pnl_grand_cols)
-        st.dataframe(styled_grand, use_container_width=True, hide_index=True)
+        _show_df(grand_df, gfmt, pnl_grand_cols, use_container_width=True)
 
     st.divider()
 
@@ -1546,15 +1470,78 @@ if is_excel:
                     sold_totals[col] = ""
             sold_table = pd.concat([sold_table, pd.DataFrame([sold_totals])], ignore_index=True)
 
-            def _style_sold_total(row):
-                if row.iloc[0] == "TOTAL":
-                    return ["font-weight: bold; border-top: 2px solid #333; background-color: #f5f5f5"] * len(row)
-                return [""] * len(row)
+            _show_df(sold_table, sold_fmt, pnl_sold_cols, use_container_width=True)
 
-            styled_sold = sold_table.style.format(sold_fmt).apply(_style_sold_total, axis=1)
-            if pnl_sold_cols:
-                styled_sold = styled_sold.map(_style_pnl, subset=pnl_sold_cols)
-            st.dataframe(styled_sold, use_container_width=True, hide_index=True)
+            # ── BY TICKER ──
+            st.markdown("**By Ticker**")
+            _s_num_cols = [c for c in ["sold_units", "book_cost_sold", "sold_market_value",
+                                        "realized_pnl", "realized_pnl_cad"] if c in real_sold.columns]
+            _s_work = real_sold.copy()
+            if "parent_ticker" in _s_work.columns and "ticker" in _s_work.columns:
+                _s_work["_tick"] = _s_work["parent_ticker"].where(
+                    _s_work["parent_ticker"].notna() & (_s_work["parent_ticker"].astype(str).str.strip() != "nan"),
+                    _s_work["ticker"]
+                )
+            else:
+                _s_work["_tick"] = _s_work.get("ticker", "")
+
+            _bt = _s_work.groupby("_tick")[_s_num_cols].sum().reset_index()
+            _bt.columns = ["Ticker"] + [c.replace("_", " ").title() for c in _s_num_cols]
+            if "Book Cost Sold" in _bt.columns and "Realized Pnl Cad" in _bt.columns:
+                _bt["Return %"] = (_bt["Realized Pnl Cad"] / _bt["Book Cost Sold"]).where(_bt["Book Cost Sold"] != 0)
+            _bt = _bt.sort_values("Realized Pnl Cad" if "Realized Pnl Cad" in _bt.columns else _bt.columns[1], ascending=False)
+
+            _bt_tot = {"Ticker": "TOTAL"}
+            for _c in _bt.columns[1:]:
+                if _c == "Return %":
+                    _t_bk = pd.to_numeric(_bt.get("Book Cost Sold"), errors="coerce").sum()
+                    _t_rp = pd.to_numeric(_bt.get("Realized Pnl Cad"), errors="coerce").sum()
+                    _bt_tot[_c] = _t_rp / _t_bk if _t_bk else None
+                else:
+                    _bt_tot[_c] = pd.to_numeric(_bt[_c], errors="coerce").sum()
+            _bt = pd.concat([_bt, pd.DataFrame([_bt_tot])], ignore_index=True)
+
+            _bt_fmt = {}
+            for _c in _bt.columns:
+                if any(k in _c.lower() for k in ["cost", "value", "pnl", "market"]):
+                    _bt_fmt[_c] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                elif "units" in _c.lower():
+                    _bt_fmt[_c] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                elif "return" in _c.lower():
+                    _bt_fmt[_c] = lambda x: f"{x:.1%}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+
+            _pnl_bt = [c for c in _bt.columns if "pnl" in c.lower() or "return" in c.lower()]
+            _show_df(_bt, _bt_fmt, _pnl_bt, use_container_width=True)
+
+            # ── BY ACCOUNT TYPE ──
+            if "account_type" in real_sold.columns:
+                st.markdown("**By Account Type**")
+                _ba = real_sold.groupby("account_type")[_s_num_cols].sum().reset_index()
+                _ba.columns = ["Account Type"] + [c.replace("_", " ").title() for c in _s_num_cols]
+                if "Book Cost Sold" in _ba.columns and "Realized Pnl Cad" in _ba.columns:
+                    _ba["Return %"] = (_ba["Realized Pnl Cad"] / _ba["Book Cost Sold"]).where(_ba["Book Cost Sold"] != 0)
+
+                _ba_tot = {"Account Type": "TOTAL"}
+                for _c in _ba.columns[1:]:
+                    if _c == "Return %":
+                        _t_bk = pd.to_numeric(_ba.get("Book Cost Sold"), errors="coerce").sum()
+                        _t_rp = pd.to_numeric(_ba.get("Realized Pnl Cad"), errors="coerce").sum()
+                        _ba_tot[_c] = _t_rp / _t_bk if _t_bk else None
+                    else:
+                        _ba_tot[_c] = pd.to_numeric(_ba[_c], errors="coerce").sum()
+                _ba = pd.concat([_ba, pd.DataFrame([_ba_tot])], ignore_index=True)
+
+                _ba_fmt = {}
+                for _c in _ba.columns:
+                    if any(k in _c.lower() for k in ["cost", "value", "pnl", "market"]):
+                        _ba_fmt[_c] = lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                    elif "units" in _c.lower():
+                        _ba_fmt[_c] = lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+                    elif "return" in _c.lower():
+                        _ba_fmt[_c] = lambda x: f"{x:.1%}" if isinstance(x, (int, float)) and pd.notna(x) else "—"
+
+                _pnl_ba = [c for c in _ba.columns if "pnl" in c.lower() or "return" in c.lower()]
+                _show_df(_ba, _ba_fmt, _pnl_ba, use_container_width=True)
 
     # --- AI on Excel data ---
     st.divider()
